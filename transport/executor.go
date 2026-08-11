@@ -273,6 +273,11 @@ func (e *Executor) attempt(ctx context.Context, method, endpoint string, bodyByt
 		Msg  string          `json:"msg"`
 		Data json.RawMessage `json:"data"`
 	}
+	// Successful DELETE endpoints may legitimately return 204 without a
+	// KuCoin response envelope.
+	if len(bytes.TrimSpace(respBody)) == 0 {
+		return meta, nil
+	}
 	if err := json.Unmarshal(respBody, &envelope); err != nil {
 		return meta, fmt.Errorf("kucoin: decode response envelope: %w", err)
 	}

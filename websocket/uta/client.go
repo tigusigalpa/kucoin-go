@@ -23,6 +23,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"sync"
 	"time"
 
@@ -109,6 +110,7 @@ type Client struct {
 	autoReconnect bool
 
 	mu            sync.RWMutex
+	writeMu       sync.Mutex
 	conn          *websocket.Conn
 	subscriptions map[string]*subscription
 	ackWaiters    map[string]chan struct{}
@@ -170,12 +172,17 @@ func (c *Client) Connect(ctx context.Context) error {
 }
 
 func (c *Client) dial(ctx context.Context) error {
-	url := c.host
+	host, err := url.Parse(c.host)
+	if err != nil {
+		return fmt.Errorf("kucoin: uta ws: parse host: %w", err)
+	}
 	if c.token != "" {
-		url += "?token=" + c.token
+		query := host.Query()
+		query.Set("token", c.token)
+		host.RawQuery = query.Encode()
 	}
 
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, url, nil)
+	conn, _, err := websocket.DefaultDialer.DialContext(ctx, host.String(), nil)
 	if err != nil {
 		return fmt.Errorf("kucoin: uta ws dial: %w", err)
 	}
@@ -270,6 +277,10 @@ func (c *Client) Close() error {
 }
 
 func (c *Client) writeJSON(v any) error {
+	// gorilla/websocket permits only one concurrent writer per connection.
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
 	c.mu.RLock()
 	conn := c.conn
 	c.mu.RUnlock()

@@ -136,3 +136,34 @@ func TestClient_Close(t *testing.T) {
 		t.Fatalf("second Close should be a no-op, got: %v", err)
 	}
 }
+
+func TestClient_ConnectEscapesTokenAndPreservesHostQuery(t *testing.T) {
+	connected := make(chan *http.Request, 1)
+	server := fakeServer(t, func(conn *websocket.Conn) {})
+	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connected <- r
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err == nil {
+			defer conn.Close()
+			_ = conn.WriteJSON(map[string]any{"sessionId": "sess-1", "message": "welcome"})
+		}
+	})
+	defer server.Close()
+
+	client := NewClient(wsURL(server.URL)+"?region=eu", "a+b&c", WithAutoReconnect(false))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer client.Close()
+
+	select {
+	case request := <-connected:
+		if request.URL.Query().Get("region") != "eu" || request.URL.Query().Get("token") != "a+b&c" {
+			t.Errorf("unexpected query: %s", request.URL.RawQuery)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server did not receive connection")
+	}
+}

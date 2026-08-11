@@ -207,6 +207,20 @@ func TestDo_RejectsOversizedResponse(t *testing.T) {
 	}
 }
 
+func TestDoPublic_AcceptsNoContentResponse(t *testing.T) {
+	exec, _ := newTestExecutor(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}, Credentials{})
+
+	meta, err := exec.DoPublic(context.Background(), http.MethodDelete, "/api/resource", nil, nil)
+	if err != nil {
+		t.Fatalf("DoPublic: %v", err)
+	}
+	if meta == nil || meta.HTTPStatus != http.StatusNoContent {
+		t.Fatalf("response metadata = %+v, want HTTP 204", meta)
+	}
+}
+
 func TestDo_DoesNotRetryPermanentBuildRequestError(t *testing.T) {
 	retries := 0
 	exec := NewExecutor(ExecutorConfig{
