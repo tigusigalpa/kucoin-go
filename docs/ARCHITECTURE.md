@@ -8,10 +8,35 @@ kucoin-go/                  root package: ClientConfig, Option, Client (UTA/Clas
 ├── transport/              Executor (signed/public HTTP), ResponseMeta, error hierarchy
 │                           owns Credentials/Clock/Logger/RetryPolicy — root package re-exports
 │                           them as type aliases so callers only import "kucoin"
-├── uta/market/              first UTA service — depends only on transport.Executor
+├── uta/market/              public market data — depends only on transport.Executor
+├── uta/account/             private account endpoints — same pattern
+├── uta/orders/              private order-management endpoints — same pattern
+├── uta/positions/           private position-management endpoints — same pattern
+├── uta/leverage/            private leverage endpoints — split out because all
+│                            three require the "Unified" permission, unlike most
+│                            read endpoints elsewhere, which need only "General"
 ├── internal/endpoints.yaml  manifest: one row per implemented method
 └── internal/gendocs/        generates docs/ENDPOINTS.md from the manifest
 ```
+
+Every `uta/*` service package follows the identical shape: a `Client` struct
+wrapping `*transport.Executor`, a `NewClient(executor)` constructor, and one
+method per endpoint. None of them import each other — they're peers under
+`uta/`, wired together only in the root `config.go`'s `UTAServices` struct.
+This keeps each service independently testable and means adding a new
+domain (e.g. a future `uta/transfers`) never risks an import cycle.
+
+## Local, no-network validation
+
+A few operations validate obviously-malformed input before making any
+HTTP call, returning a local sentinel error instead: `orders.CancelOrder`
+and `orders.GetOrderDetails` require `OrderID` or `ClientOid`
+(`orders.ErrOrderIDOrClientOidRequired`), and
+`orders.BatchCancelOrderByID` additionally rejects more than 20 items
+(`orders.ErrTooManyBatchCancelItems`) and validates every item in the
+batch up front. This is deliberately shallow — it does not duplicate
+KuCoin's business validation (min order size, symbol existence, etc.) —
+just enough to catch requests that would obviously fail signing/sending.
 
 ## Why transport owns the shared config types
 

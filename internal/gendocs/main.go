@@ -63,7 +63,7 @@ func main() {
 
 	b.WriteString("\n## Not Supported / Abandoned\n\n")
 	if len(m.Abandoned) == 0 {
-		b.WriteString("None tracked yet for this Phase-1 checkpoint. See KuCoin's [abandoned-endpoints introduction](https://www.kucoin.com/docs-new/abandoned-endpoints/introduction) for the platform-wide list.\n")
+		b.WriteString("None tracked yet. See KuCoin's [abandoned-endpoints introduction](https://www.kucoin.com/docs-new/abandoned-endpoints/introduction) for the platform-wide list.\n")
 	} else {
 		b.WriteString("| Method | Reason | Docs |\n|---|---|---|\n")
 		for _, a := range m.Abandoned {
@@ -72,7 +72,7 @@ func main() {
 	}
 
 	b.WriteString("\n## Everything else (not yet implemented)\n\n")
-	b.WriteString("This is a Phase-1 checkpoint covering UTA Market only. Every other domain in the brief — UTA Account/Orders/Positions/Leverage/Transfers, Classic Spot/Margin/Futures market data and trading, and all WebSocket channels — is not yet implemented. See the root [README.md](../README.md#status) for the honest current-vs-planned breakdown.\n")
+	b.WriteString("Covered so far: UTA Market/Account/Orders/Positions/Leverage, Classic Spot market data + orders, a Classic Futures seed set (market/orders/positions), and WebSocket bullet-token issuance + a generic reconnecting client for both UTA and Classic. Not yet implemented: Classic Margin, advanced Spot/Margin order types (stop/OCO/batch/DCP), the broader per-channel WebSocket catalog beyond the generic core, and Phase 3 specialty domains (funding, sub-accounts, deposits/withdrawals, Earn, VIP Lending, Convert, Broker, Affiliate, Copy Trading). See the root [README.md](../README.md#status) for the current-vs-planned breakdown.\n")
 
 	if err := os.WriteFile("docs/ENDPOINTS.md", []byte(b.String()), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "gendocs: write docs/ENDPOINTS.md:", err)
