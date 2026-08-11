@@ -137,6 +137,28 @@ project follows [SemVer](https://semver.org/).
   separate Classic Margin DCP endpoint exists — confirmed via
   documentation research; the older unified `/api/ua/v1/dcp/...`
   endpoints are marked abandoned by KuCoin and were not implemented.
+- `Classic.Margin.Orders`: the stop-order and OCO-order families —
+  AddStopOrder, CancelStopOrderByID, CancelStopOrderByClientOid,
+  CancelStopOrders, GetStopOrderByID, GetStopOrderByClientOid,
+  GetStopOrderList, AddOCOOrder, CancelOCOOrderByID,
+  CancelOCOOrderByClientOid, CancelOCOOrders, GetOCOOrderByID,
+  GetOCOOrderByClientOid, GetOCOOrderDetails, GetOCOOrderList (15
+  endpoints). Confirmed via documentation research that Classic Margin
+  has its own parallel stop/OCO endpoint families under
+  `/api/v3/hf/margin/stop-order...`/`/api/v3/hf/margin/oco-order...` —
+  structurally distinct from Classic Spot's `/api/v1/stop-order`/
+  `/api/v3/oco/order`, not shared endpoints reached via a query
+  parameter. Margin mode is selected via `IsIsolated` on the two Add
+  requests, while `TradeType` (matching this package's existing HF
+  order convention) discriminates cross vs isolated on the
+  cancel-batch/list endpoints — two different KuCoin conventions,
+  preserved as-is. `GetStopOrderByClientOid` decodes a single object
+  here, unlike Classic Spot's array-returning equivalent.
+  `CancelStopOrderByID` sends `orderId` as a query parameter despite
+  KuCoin's own OpenAPI spec documenting that endpoint with zero
+  parameters — a confirmed documentation bug, implemented by analogy
+  with every sibling cancel-by-id endpoint and flagged as unverified
+  against a live account in the method's docblock.
 
 ### Fixed
 
@@ -211,10 +233,10 @@ project follows [SemVer](https://semver.org/).
   stop orders, OCO orders, and Disconnect Cancel Protocol), a Classic
   Futures seed set (place/test/query orders; position/margin/
   position-mode reads), and a Classic Margin seed set (market data,
-  order management, borrow/repay/interest) are implemented. Classic
-  Futures market data, Futures order cancellation, Classic Margin's
-  stop/OCO orders and lending-side ("Credit") endpoints, and all Phase
-  3 domains are not yet implemented — see
+  order management including stop/OCO orders, borrow/repay/interest)
+  are implemented. Classic Futures market data, Futures order
+  cancellation, Classic Margin's lending-side ("Credit") endpoints, and
+  all Phase 3 domains are not yet implemented — see
   [docs/ENDPOINTS.md](docs/ENDPOINTS.md).
 - `Classic.Spot.Orders.Order.CancelReason` is an opaque integer code
   (0-18, 34-39, 99) — KuCoin's docs list the allowed values with no

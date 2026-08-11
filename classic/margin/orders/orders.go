@@ -206,3 +206,299 @@ func (c *Client) GetTradeHistory(ctx context.Context, symbol, tradeType string, 
 	}
 	return &result, nil
 }
+
+func validateMarginStopOrder(req StopOrderRequest) error {
+	if (req.Type == "" || req.Type == "limit") && req.Price == "" {
+		return ErrLimitOrderRequiresPrice
+	}
+	return nil
+}
+
+// AddStopOrder submits a new Classic Margin stop order.
+//
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/add-stop-order
+func (c *Client) AddStopOrder(ctx context.Context, req StopOrderRequest) (*StopOrderRef, error) {
+	if err := validateMarginStopOrder(req); err != nil {
+		return nil, err
+	}
+	var result StopOrderRef
+	if _, err := c.executor.Do(ctx, http.MethodPost, "/api/v3/hf/margin/stop-order", nil, req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// CancelStopOrderByID cancels a single stop order by its
+// KuCoin-assigned ID. KuCoin's own OpenAPI spec documents this
+// endpoint with zero parameters despite requiring one to identify the
+// order -- a confirmed documentation bug. This SDK sends orderId as a
+// query parameter by analogy with every sibling cancel-by-id endpoint;
+// verify against a live account before relying on it in production.
+//
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/cancel-stop-order-by-orderid
+func (c *Client) CancelStopOrderByID(ctx context.Context, orderID string) (*CancelOrderIDsResult, error) {
+	var result CancelOrderIDsResult
+	if _, err := c.executor.Do(ctx, http.MethodDelete, "/api/v3/hf/margin/stop-order/cancel-by-id", map[string]string{"orderId": orderID}, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// CancelStopOrderByClientOid cancels a single stop order by its
+// caller-assigned client order ID.
+//
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/cancel-stop-order-by-clientoid
+func (c *Client) CancelStopOrderByClientOid(ctx context.Context, clientOid string) (*CancelOrderIDsResult, error) {
+	var result CancelOrderIDsResult
+	if _, err := c.executor.Do(ctx, http.MethodDelete, "/api/v3/hf/margin/stop-order/cancel-by-clientOid", map[string]string{"clientOid": clientOid}, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// CancelStopOrders cancels every stop order matching the given filters.
+// Unlike Classic Spot's equivalent, tradeType is required by KuCoin
+// here.
+//
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/cancel-stop-orders
+func (c *Client) CancelStopOrders(ctx context.Context, symbol, tradeType, orderIDs string) (*CancelOrderIDsResult, error) {
+	query := map[string]string{"tradeType": tradeType}
+	if symbol != "" {
+		query["symbol"] = symbol
+	}
+	if orderIDs != "" {
+		query["orderIds"] = orderIDs
+	}
+	var result CancelOrderIDsResult
+	if _, err := c.executor.Do(ctx, http.MethodDelete, "/api/v3/hf/margin/stop-order/cancel", query, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetStopOrderByID looks up a single stop order by its KuCoin-assigned
+// ID. Note the literal path segment "orderId" -- KuCoin's path is not
+// templated here, the identifier is passed as a query parameter
+// instead.
+//
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/get-stop-order-details-by-orderid
+func (c *Client) GetStopOrderByID(ctx context.Context, orderID string) (*StopOrder, error) {
+	var result StopOrder
+	if _, err := c.executor.Do(ctx, http.MethodGet, "/api/v3/hf/margin/stop-order/orderId", map[string]string{"orderId": orderID}, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetStopOrderByClientOid looks up a single stop order by its
+// caller-assigned client order ID. Unlike Classic Spot's equivalent,
+// this decodes a single object, not an array.
+//
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/get-stop-order-details-by-clientoid
+func (c *Client) GetStopOrderByClientOid(ctx context.Context, clientOid string) (*StopOrder, error) {
+	var result StopOrder
+	if _, err := c.executor.Do(ctx, http.MethodGet, "/api/v3/hf/margin/stop-order/clientOid", map[string]string{"clientOid": clientOid}, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetStopOrderListOptions are the optional filters for GetStopOrderList.
+type GetStopOrderListOptions struct {
+	Symbol      string
+	Side        string
+	Type        string // limit, market, limit_stop, market_stop
+	TradeType   string // MARGIN_TRADE, MARGIN_ISOLATED_TRADE
+	OrderIDs    string // comma-separated
+	Stop        string // stop, oco
+	StartAt     int64  // Unix milliseconds
+	EndAt       int64  // Unix milliseconds
+	CurrentPage int
+	PageSize    int // default 50, range 10-500
+}
+
+// GetStopOrderList lists stop orders, paginated by page number.
+//
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/get-stop-orders-list
+func (c *Client) GetStopOrderList(ctx context.Context, opts GetStopOrderListOptions) (*StopOrderPage, error) {
+	query := map[string]string{}
+	if opts.Symbol != "" {
+		query["symbol"] = opts.Symbol
+	}
+	if opts.Side != "" {
+		query["side"] = opts.Side
+	}
+	if opts.Type != "" {
+		query["type"] = opts.Type
+	}
+	if opts.TradeType != "" {
+		query["tradeType"] = opts.TradeType
+	}
+	if opts.OrderIDs != "" {
+		query["orderIds"] = opts.OrderIDs
+	}
+	if opts.Stop != "" {
+		query["stop"] = opts.Stop
+	}
+	if opts.StartAt != 0 {
+		query["startAt"] = strconv.FormatInt(opts.StartAt, 10)
+	}
+	if opts.EndAt != 0 {
+		query["endAt"] = strconv.FormatInt(opts.EndAt, 10)
+	}
+	if opts.CurrentPage > 0 {
+		query["currentPage"] = strconv.Itoa(opts.CurrentPage)
+	}
+	if opts.PageSize > 0 {
+		query["pageSize"] = strconv.Itoa(opts.PageSize)
+	}
+	var result StopOrderPage
+	if _, err := c.executor.Do(ctx, http.MethodGet, "/api/v3/hf/margin/stop-orders", query, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// AddOCOOrder submits a new Classic Margin OCO
+// (One-Cancels-the-Other) order.
+//
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/add-oco-order
+func (c *Client) AddOCOOrder(ctx context.Context, req OCOOrderRequest) (*OCOOrderRef, error) {
+	var result OCOOrderRef
+	if _, err := c.executor.Do(ctx, http.MethodPost, "/api/v3/hf/margin/oco-order", nil, req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// CancelOCOOrderByID cancels an OCO pair by its KuCoin-assigned order
+// ID. CancelledOrderIDs holds both leg IDs of the cancelled pair.
+//
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/cancel-oco-order-by-orderid
+func (c *Client) CancelOCOOrderByID(ctx context.Context, orderID string) (*CancelOrderIDsResult, error) {
+	var result CancelOrderIDsResult
+	if _, err := c.executor.Do(ctx, http.MethodDelete, "/api/v3/hf/margin/oco-order/cancel-by-id", map[string]string{"orderId": orderID}, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// CancelOCOOrderByClientOid cancels an OCO pair by its caller-assigned
+// client order ID.
+//
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/cancel-oco-order-by-clientoid
+func (c *Client) CancelOCOOrderByClientOid(ctx context.Context, clientOid string) (*CancelOrderIDsResult, error) {
+	var result CancelOrderIDsResult
+	if _, err := c.executor.Do(ctx, http.MethodDelete, "/api/v3/hf/margin/oco-order/cancel-by-clientOid", map[string]string{"clientOid": clientOid}, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// CancelOCOOrders cancels every OCO pair matching the given filters
+// (all optional -- an empty call cancels every OCO order on the
+// account).
+//
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/cancel-multiple-oco-orders
+func (c *Client) CancelOCOOrders(ctx context.Context, symbol, tradeType, orderIDs string) (*CancelOrderIDsResult, error) {
+	query := map[string]string{}
+	if symbol != "" {
+		query["symbol"] = symbol
+	}
+	if tradeType != "" {
+		query["tradeType"] = tradeType
+	}
+	if orderIDs != "" {
+		query["orderIds"] = orderIDs
+	}
+	var result CancelOrderIDsResult
+	if _, err := c.executor.Do(ctx, http.MethodDelete, "/api/v3/hf/margin/oco-order/cancel", query, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetOCOOrderByID looks up an OCO pair's flat summary by its
+// KuCoin-assigned order ID. Call GetOCOOrderDetails for leg-level
+// detail.
+//
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/get-oco-order-info-by-orderid
+func (c *Client) GetOCOOrderByID(ctx context.Context, orderID string) (*OCOOrderInfo, error) {
+	var result OCOOrderInfo
+	if _, err := c.executor.Do(ctx, http.MethodGet, "/api/v3/hf/margin/oco-order/orderId", map[string]string{"orderId": orderID}, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetOCOOrderByClientOid looks up an OCO pair's flat summary by its
+// caller-assigned client order ID.
+//
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/get-oco-order-info-by-clientoid
+func (c *Client) GetOCOOrderByClientOid(ctx context.Context, clientOid string) (*OCOOrderInfo, error) {
+	var result OCOOrderInfo
+	if _, err := c.executor.Do(ctx, http.MethodGet, "/api/v3/hf/margin/oco-order/clientOid", map[string]string{"clientOid": clientOid}, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetOCOOrderDetails looks up an OCO pair's full record, including its
+// two constituent leg orders (see OCOOrderLeg). Unlike GetOCOOrderByID,
+// there is no "by ClientOid" variant of this endpoint -- only orderID
+// is accepted.
+//
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/get-oco-order-details
+func (c *Client) GetOCOOrderDetails(ctx context.Context, orderID string) (*OCOOrderDetails, error) {
+	var result OCOOrderDetails
+	if _, err := c.executor.Do(ctx, http.MethodGet, "/api/v3/hf/margin/oco-order/detail/orderId", map[string]string{"orderId": orderID}, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetOCOOrderListOptions are the optional filters for GetOCOOrderList.
+type GetOCOOrderListOptions struct {
+	Symbol      string
+	TradeType   string // MARGIN_TRADE, MARGIN_ISOLATED_TRADE
+	OrderIDs    string // comma-separated, up to 500
+	StartAt     int64  // Unix milliseconds
+	EndAt       int64  // Unix milliseconds
+	CurrentPage int
+	PageSize    int // default 50, range 10-500
+}
+
+// GetOCOOrderList lists OCO pairs (flat summaries -- call
+// GetOCOOrderDetails per order ID for leg-level detail), paginated by
+// page number.
+//
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/get-oco-order-list
+func (c *Client) GetOCOOrderList(ctx context.Context, opts GetOCOOrderListOptions) (*OCOOrderPage, error) {
+	query := map[string]string{}
+	if opts.Symbol != "" {
+		query["symbol"] = opts.Symbol
+	}
+	if opts.TradeType != "" {
+		query["tradeType"] = opts.TradeType
+	}
+	if opts.OrderIDs != "" {
+		query["orderIds"] = opts.OrderIDs
+	}
+	if opts.StartAt != 0 {
+		query["startAt"] = strconv.FormatInt(opts.StartAt, 10)
+	}
+	if opts.EndAt != 0 {
+		query["endAt"] = strconv.FormatInt(opts.EndAt, 10)
+	}
+	if opts.CurrentPage > 0 {
+		query["currentPage"] = strconv.Itoa(opts.CurrentPage)
+	}
+	if opts.PageSize > 0 {
+		query["pageSize"] = strconv.Itoa(opts.PageSize)
+	}
+	var result OCOOrderPage
+	if _, err := c.executor.Do(ctx, http.MethodGet, "/api/v3/hf/margin/oco-orders", query, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}

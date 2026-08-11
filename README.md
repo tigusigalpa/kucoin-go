@@ -21,12 +21,12 @@ If you need full API coverage today, use the official SDK. If you want a smaller
 
 ## Status
 
-**This is an early, honest checkpoint, not a finished library.** UTA's public market data plus private account/orders/positions/leverage are implemented and tested, alongside Classic Spot (market data + HF order management + the stop-order and OCO-order families + Disconnect Cancel Protocol), a Classic Futures seed set (place/test/query orders, position/margin/position-mode reads — not cancel, and not the full stop/OCO order family), a Classic Margin seed set (symbols/mark-price/config/risk-limit market data, core order management, borrow/repay/interest), and a WebSocket layer (bullet-token issuance for all three account/host combinations, plus a generic reconnecting client for both the UTA and Classic wire protocols — see [WebSocket examples](#websocket-examples)). Margin's stop/OCO orders, Classic Margin's lending-side ("Credit") endpoints, and Phase 3 specialty domains are **not yet implemented**. See [docs/ENDPOINTS.md](docs/ENDPOINTS.md) for the exact, generated list of what's covered, with a direct KuCoin documentation link per method.
+**This is an early, honest checkpoint, not a finished library.** UTA's public market data plus private account/orders/positions/leverage are implemented and tested, alongside Classic Spot (market data + HF order management + the stop-order and OCO-order families + Disconnect Cancel Protocol), a Classic Futures seed set (place/test/query orders, position/margin/position-mode reads — not cancel, and not the full stop/OCO order family), and a Classic Margin seed set (symbols/mark-price/config/risk-limit market data, core order management, stop/OCO orders, borrow/repay/interest — confirmed to be a distinct parallel endpoint family from Classic Spot's, not a shared one), plus a WebSocket layer (bullet-token issuance for all three account/host combinations, plus a generic reconnecting client for both the UTA and Classic wire protocols — see [WebSocket examples](#websocket-examples)). Classic Margin's lending-side ("Credit") endpoints and Phase 3 specialty domains are **not yet implemented**. See [docs/ENDPOINTS.md](docs/ENDPOINTS.md) for the exact, generated list of what's covered, with a direct KuCoin documentation link per method.
 
 | Phase | Scope | Status |
 |---|---|---|
 | 1 — reliable core | Shared HTTP/auth/error/retry infra; UTA market/account/orders; Classic Spot market/orders; Classic Futures market/order/position; UTA + Classic WS core channels | **Done** — shared infra, UTA Market/Account/Orders, **Classic Spot**, **Classic Futures seed set**, and a generic reconnecting WS client (both protocols) are done; Futures market-data endpoints and hand-typed per-channel WS payloads remain open |
-| 2 — trading breadth | Classic Margin; advanced Spot/Margin orders; **UTA positions/leverage**; more WS channels | **Partial** — UTA Positions/Leverage, a **Classic Margin seed set** (market data, order management, borrow/repay/interest), and **Classic Spot stop/OCO orders** are done; Margin stop/OCO orders and Margin's lending-side ("Credit") endpoints not started |
+| 2 — trading breadth | Classic Margin; advanced Spot/Margin orders; **UTA positions/leverage**; more WS channels | **Partial** — UTA Positions/Leverage, a **Classic Margin seed set** (market data, order management, stop/OCO orders, borrow/repay/interest), and **Classic Spot stop/OCO orders** are done; Margin's lending-side ("Credit") endpoints not started |
 | 3 — specialty domains | Account/funding/subaccounts/deposits/withdrawals, Earn, VIP Lending, Convert, Broker, Affiliate, Copy Trading | Not started |
 
 We'd rather ship a small, correct surface than a large, half-tested one. If your use case needs something from Phase 2 or 3, please open an issue — real demand is what decides what gets built next.
@@ -254,6 +254,20 @@ _, err = client.Classic.Margin.Orders.CancelOrderByID(ctx, marginRef.OrderID, "B
 
 borrowRef, err := client.Classic.Margin.Debit.Borrow(ctx, classicmargindebit.BorrowRequest{
 	Currency: "USDT", Size: "100", TimeInForce: "FOK",
+})
+```
+
+Margin has its own parallel stop-order and OCO-order families under `/api/v3/hf/margin/stop-order` / `/api/v3/hf/margin/oco-order` — confirmed distinct from Classic Spot's `/api/v1/stop-order` / `/api/v3/oco/order`, not shared endpoints. Margin mode is selected via `IsIsolated` on these two Add calls (not `TradeType`, which is reserved for the listing endpoints):
+
+```go
+marginStopRef, err := client.Classic.Margin.Orders.AddStopOrder(ctx, classicmarginorders.StopOrderRequest{
+	Symbol:     "BTC-USDT",
+	Side:       "sell",
+	Type:       "limit",
+	StopPrice:  "45000",
+	Price:      "44900",
+	Size:       "0.001",
+	IsIsolated: true,
 })
 ```
 
