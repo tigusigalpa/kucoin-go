@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -140,15 +141,52 @@ func (e *Executor) do(ctx context.Context, method, path string, query map[string
 }
 
 func isRetryable(meta *ResponseMeta, err error) bool {
-	var netErr interface{ Temporary() bool }
-	if errors.As(err, &netErr) && netErr.Temporary() {
-		return true
+	if err == nil {
+		return false
 	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
 	if meta == nil {
-		// No response at all (connection error, timeout) is retryable.
+		return isRetryableNetworkError(err)
+	}
+
+	return meta.HTTPStatus == http.StatusTooManyRequests || meta.HTTPStatus >= 500
+}
+
+func isRetryableNetworkError(err error) bool {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		if urlErr.Timeout() {
+			return true
+		}
+		if isRetryableNetworkCause(urlErr.Err) {
+			return true
+		}
+		return false
+	}
+
+	return isRetryableNetworkCause(err)
+}
+
+func isRetryableNetworkCause(err error) bool {
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		if netErr.Timeout() {
+			return true
+		}
+		var temporary interface{ Temporary() bool }
+		if errors.As(err, &temporary) && temporary.Temporary() {
+			return true
+		}
+	}
+
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
-	return meta.HTTPStatus == http.StatusTooManyRequests || meta.HTTPStatus >= 500
+
+	return false
 }
 
 func (e *Executor) attempt(ctx context.Context, method, endpoint string, bodyBytes []byte, signed bool, result interface{}) (*ResponseMeta, error) {

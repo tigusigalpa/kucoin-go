@@ -207,6 +207,30 @@ func TestDo_RejectsOversizedResponse(t *testing.T) {
 	}
 }
 
+func TestDo_DoesNotRetryPermanentBuildRequestError(t *testing.T) {
+	retries := 0
+	exec := NewExecutor(ExecutorConfig{
+		BaseURL: "//bad-base-url",
+		RetryPolicy: &RetryPolicy{
+			MaxAttempts: 3,
+			BaseDelay:   time.Millisecond,
+			MaxDelay:    time.Millisecond,
+			MaxElapsed:  time.Second,
+			OnRetry: func(attempt int, delay time.Duration, err error) {
+				retries++
+			},
+		},
+	})
+
+	_, err := exec.DoPublic(context.Background(), http.MethodGet, "/api/ua/v1/market/ticker", nil, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if retries != 0 {
+		t.Fatalf("retries = %d, want 0 for permanent local build error", retries)
+	}
+}
+
 func TestMapHTTPStatus_Success(t *testing.T) {
 	if err := MapHTTPStatus(200); err != nil {
 		t.Errorf("expected nil for 200, got %v", err)
