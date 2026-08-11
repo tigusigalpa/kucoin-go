@@ -38,6 +38,10 @@ func (c Credentials) IsZero() bool {
 	return c.APIKey == "" && c.APISecret == "" && c.APIPassphrase == ""
 }
 
+func (c Credentials) isComplete() bool {
+	return c.APIKey != "" && c.APISecret != "" && c.APIPassphrase != ""
+}
+
 // Clock abstracts time so tests can control timestamps and callers can
 // implement documented clock-skew correction against KuCoin's server-time
 // endpoint. Never synchronized implicitly.

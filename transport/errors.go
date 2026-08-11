@@ -40,6 +40,7 @@ var (
 	ErrServerError        = errors.New("kucoin: internal server error")
 	ErrServiceUnavailable = errors.New("kucoin: service unavailable")
 	ErrRateLimited        = errors.New("kucoin: rate limit exceeded")
+	ErrResponseTooLarge   = errors.New("kucoin: response body exceeds size limit")
 )
 
 // MapHTTPStatus maps an HTTP status code to a sentinel error, per KuCoin's

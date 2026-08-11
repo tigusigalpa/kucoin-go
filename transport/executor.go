@@ -19,11 +19,14 @@ import (
 // both the Classic and UTA REST APIs.
 //
 // Docs: https://www.kucoin.com/docs-new/error-code/http
-const successCode = "200000"
+const (
+	successCode          = "200000"
+	maxResponseBodyBytes = 10 << 20
+)
 
 // ErrCredentialsRequired is returned locally (no network call is made)
-// when a private endpoint is called without credentials configured.
-var ErrCredentialsRequired = errors.New("kucoin: this endpoint requires API credentials; none were configured")
+// when a private endpoint is called without complete API credentials.
+var ErrCredentialsRequired = errors.New("kucoin: this endpoint requires complete API credentials")
 
 // Executor is the shared HTTP transport for one REST base URL. It signs
 // private requests, decodes KuCoin's response envelope, captures response
@@ -62,9 +65,9 @@ func (e *Executor) DoPublic(ctx context.Context, method, path string, query map[
 
 // Do issues an authenticated request, signing it with the configured
 // credentials. Returns ErrCredentialsRequired locally (no network call)
-// if no credentials were configured.
+// if complete credentials were not configured.
 func (e *Executor) Do(ctx context.Context, method, path string, query map[string]string, body interface{}, result interface{}) (*ResponseMeta, error) {
-	if e.cfg.Credentials.IsZero() {
+	if !e.cfg.Credentials.isComplete() {
 		return nil, ErrCredentialsRequired
 	}
 	return e.do(ctx, method, path, query, body, true, result)
@@ -121,6 +124,9 @@ func (e *Executor) do(ctx context.Context, method, path string, query map[string
 		}
 
 		meta, err := e.attempt(ctx, method, endpoint, bodyBytes, signed, result)
+		if meta != nil {
+			meta.Attempts = attempt
+		}
 		lastMeta, lastErr = meta, err
 		if err == nil {
 			return meta, nil
@@ -189,9 +195,12 @@ func (e *Executor) attempt(ctx context.Context, method, endpoint string, bodyByt
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("kucoin: read response body: %w", err)
+	}
+	if len(respBody) > maxResponseBodyBytes {
+		return nil, fmt.Errorf("%w (%d bytes)", ErrResponseTooLarge, maxResponseBodyBytes)
 	}
 
 	meta := &ResponseMeta{

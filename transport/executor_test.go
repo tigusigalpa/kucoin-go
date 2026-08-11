@@ -69,17 +69,23 @@ func TestDoPublic_DoesNotSetAuthHeaders(t *testing.T) {
 }
 
 func TestDo_ReturnsErrCredentialsRequiredLocally(t *testing.T) {
-	called := false
-	exec, _ := newTestExecutor(t, func(w http.ResponseWriter, r *http.Request) {
-		called = true
-	}, Credentials{})
+	for _, creds := range []Credentials{
+		{},
+		{APIKey: "key"},
+		{APIKey: "key", APISecret: "secret"},
+	} {
+		called := false
+		exec, _ := newTestExecutor(t, func(w http.ResponseWriter, r *http.Request) {
+			called = true
+		}, creds)
 
-	_, err := exec.Do(context.Background(), http.MethodGet, "/api/ua/v1/account/ledger", nil, nil, nil)
-	if !errors.Is(err, ErrCredentialsRequired) {
-		t.Fatalf("expected ErrCredentialsRequired, got %v", err)
-	}
-	if called {
-		t.Error("no network call should have been made")
+		_, err := exec.Do(context.Background(), http.MethodGet, "/api/ua/v1/account/ledger", nil, nil, nil)
+		if !errors.Is(err, ErrCredentialsRequired) {
+			t.Fatalf("expected ErrCredentialsRequired for %+v, got %v", creds, err)
+		}
+		if called {
+			t.Errorf("no network call should have been made for %+v", creds)
+		}
 	}
 }
 
@@ -175,14 +181,29 @@ func TestDo_RetriesOnlyGETRequests(t *testing.T) {
 		RetryPolicy: &RetryPolicy{MaxAttempts: 3, BaseDelay: time.Millisecond, MaxDelay: 5 * time.Millisecond, MaxElapsed: time.Second},
 	})
 
-	_, _ = exec.Do(context.Background(), http.MethodGet, "/path", nil, nil, nil)
+	meta, _ := exec.Do(context.Background(), http.MethodGet, "/path", nil, nil, nil)
 	_, _ = exec.Do(context.Background(), http.MethodPost, "/path", nil, map[string]string{"a": "b"}, nil)
 
+	if meta == nil || meta.Attempts != 3 {
+		t.Errorf("response attempts = %+v, want 3", meta)
+	}
 	if getAttempts != 3 {
 		t.Errorf("GET attempts = %d, want 3 (retried)", getAttempts)
 	}
 	if postAttempts != 1 {
 		t.Errorf("POST attempts = %d, want 1 (never retried)", postAttempts)
+	}
+}
+
+func TestDo_RejectsOversizedResponse(t *testing.T) {
+	exec, _ := newTestExecutor(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(make([]byte, maxResponseBodyBytes+1))
+	}, Credentials{})
+
+	_, err := exec.DoPublic(context.Background(), http.MethodGet, "/api/ua/v1/market/ticker", nil, nil)
+	if !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("expected ErrResponseTooLarge, got %v", err)
 	}
 }
 
