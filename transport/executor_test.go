@@ -68,6 +68,25 @@ func TestDoPublic_DoesNotSetAuthHeaders(t *testing.T) {
 	}
 }
 
+func TestDoPublic_EncodesQueryParameters(t *testing.T) {
+	exec, _ := newTestExecutor(t, func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Query().Get("symbol"), "BTC/USDT + test"; got != want {
+			t.Errorf("symbol = %q, want %q", got, want)
+		}
+		if r.URL.Query().Has("empty") {
+			t.Error("empty query value should be omitted")
+		}
+		_, _ = w.Write([]byte(`{"code":"200000","data":{}}`))
+	}, Credentials{})
+
+	if _, err := exec.DoPublic(context.Background(), http.MethodGet, "/api/market", map[string]string{
+		"symbol": "BTC/USDT + test",
+		"empty":  "",
+	}, nil); err != nil {
+		t.Fatalf("DoPublic: %v", err)
+	}
+}
+
 func TestDo_ReturnsErrCredentialsRequiredLocally(t *testing.T) {
 	for _, creds := range []Credentials{
 		{},
@@ -192,6 +211,36 @@ func TestDo_RetriesOnlyGETRequests(t *testing.T) {
 	}
 	if postAttempts != 1 {
 		t.Errorf("POST attempts = %d, want 1 (never retried)", postAttempts)
+	}
+}
+
+func TestDo_RetriesRateLimitedGETAndReturnsSuccessfulResult(t *testing.T) {
+	attempts := 0
+	exec, _ := newTestExecutor(t, func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"code":"429000","msg":"Too many requests"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":"200000","data":{"value":"ok"}}`))
+	}, Credentials{})
+	exec.cfg.RetryPolicy = &RetryPolicy{
+		MaxAttempts: 3,
+		BaseDelay:   time.Millisecond,
+		MaxDelay:    time.Millisecond,
+		MaxElapsed:  time.Second,
+	}
+
+	var result struct {
+		Value string `json:"value"`
+	}
+	meta, err := exec.DoPublic(context.Background(), http.MethodGet, "/api/market", nil, &result)
+	if err != nil {
+		t.Fatalf("DoPublic: %v", err)
+	}
+	if attempts != 3 || meta.Attempts != 3 || result.Value != "ok" {
+		t.Errorf("attempts=%d meta=%+v result=%+v, want 3 attempts and decoded result", attempts, meta, result)
 	}
 }
 

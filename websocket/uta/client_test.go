@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -165,5 +166,42 @@ func TestClient_ConnectEscapesTokenAndPreservesHostQuery(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("server did not receive connection")
+	}
+}
+
+func TestClient_WriteJSONIsSafeForConcurrentCalls(t *testing.T) {
+	server := fakeServer(t, func(conn *websocket.Conn) {
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	})
+	defer server.Close()
+
+	client := NewClient(wsURL(server.URL), "", WithAutoReconnect(false))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer client.Close()
+
+	const writers = 32
+	var wg sync.WaitGroup
+	errs := make(chan error, writers)
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- client.writeJSON(map[string]string{"type": "ping"})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Errorf("writeJSON: %v", err)
+		}
 	}
 }
