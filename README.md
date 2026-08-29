@@ -1,7 +1,14 @@
-# KuCoin Go SDK
+# KuCoin Golang SDK
 
 ![KuCoin Golang API SDK](https://i.postimg.cc/3xK6Brxs/kucoin-go-github.jpg)
 
+[![CI](https://github.com/tigusigalpa/kucoin-go/actions/workflows/ci.yml/badge.svg)](https://github.com/tigusigalpa/kucoin-go/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-go%20test%20--race-brightgreen)](https://github.com/tigusigalpa/kucoin-go/actions/workflows/ci.yml)
+[![Go vet](https://img.shields.io/badge/code%20analysis-go%20vet-brightgreen)](https://github.com/tigusigalpa/kucoin-go/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/tigusigalpa/kucoin-go/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/tigusigalpa/kucoin-go/actions/workflows/codeql.yml)
+[![codecov](https://codecov.io/gh/tigusigalpa/kucoin-go/graph/badge.svg)](https://codecov.io/gh/tigusigalpa/kucoin-go)
+[![Go Report Card](https://goreportcard.com/badge/github.com/tigusigalpa/kucoin-go)](https://goreportcard.com/report/github.com/tigusigalpa/kucoin-go)
+[![Go Reference](https://pkg.go.dev/badge/github.com/tigusigalpa/kucoin-go.svg)](https://pkg.go.dev/github.com/tigusigalpa/kucoin-go)
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.22-blue)](go.mod)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 

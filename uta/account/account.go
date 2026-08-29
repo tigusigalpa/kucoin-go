@@ -118,7 +118,7 @@ func (c *Client) GetMode(ctx context.Context) (*Mode, error) {
 }
 
 // GetAPIKeyInfo returns metadata about the calling API key, including its
-// KC-API-KEY-VERSION (APIKeyInfo.ApiVersion) and granted permissions.
+// KC-API-KEY-VERSION (APIKeyInfo.APIVersion) and granted permissions.
 //
 // Docs: https://www.kucoin.com/docs-new/rest/ua/get-apikey-info
 func (c *Client) GetAPIKeyInfo(ctx context.Context) (*APIKeyInfo, error) {

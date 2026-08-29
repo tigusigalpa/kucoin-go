@@ -49,7 +49,7 @@ func (c *Client) ModifyCrossMarginLeverage(ctx context.Context, req ModifyCrossM
 // returns every entry for that trade type. marginMode is optional.
 //
 // Docs: https://www.kucoin.com/docs-new/rest/ua/get-leverage
-func (c *Client) GetLeverage(ctx context.Context, tradeType, currency, symbol, marginMode string) ([]LeverageEntry, error) {
+func (c *Client) GetLeverage(ctx context.Context, tradeType, currency, symbol, marginMode string) ([]Entry, error) {
 	query := map[string]string{"tradeType": tradeType}
 	if currency != "" {
 		query["currency"] = currency
@@ -60,7 +60,7 @@ func (c *Client) GetLeverage(ctx context.Context, tradeType, currency, symbol, m
 	if marginMode != "" {
 		query["marginMode"] = marginMode
 	}
-	var result []LeverageEntry
+	var result []Entry
 	if _, err := c.executor.Do(ctx, http.MethodGet, "/api/ua/v1/unified/account/leverage", query, nil, &result); err != nil {
 		return nil, err
 	}

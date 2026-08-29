@@ -132,7 +132,7 @@ func TestGetAPIKeyInfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAPIKeyInfo: %v", err)
 	}
-	if info.UID != 12345 || info.ApiVersion != 3 || info.Permission != "General,Unified" || !info.IsMaster {
+	if info.UID != 12345 || info.APIVersion != 3 || info.Permission != "General,Unified" || !info.IsMaster {
 		t.Errorf("unexpected info: %+v", info)
 	}
 }

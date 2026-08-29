@@ -69,6 +69,7 @@ func (noopLogger) Error(string, ...any) {}
 // Option configures a Client at construction time.
 type Option func(*Client)
 
+// WithLogger sets a structured logger for connection lifecycle events.
 func WithLogger(l Logger) Option {
 	return func(c *Client) { c.logger = l }
 }

@@ -115,8 +115,8 @@ type APIKeyInfo struct {
 	KycStatus  int    `json:"kycStatus"`
 	SubName    string `json:"subName,omitempty"`
 	Remark     string `json:"remark"`
-	ApiKey     string `json:"apiKey"`
-	ApiVersion int    `json:"apiVersion"`
+	APIKey     string `json:"apiKey"`
+	APIVersion int    `json:"apiVersion"`
 	// Permission is a comma-separated list, e.g.
 	// "General,Spot,Margin,Unified,Futures,InnerTransfer,Transfer,Earn".
 	Permission    string `json:"permission"`

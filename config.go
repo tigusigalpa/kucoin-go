@@ -46,25 +46,32 @@ const (
 	DefaultClassicFuturesBaseURL = "https://api-futures.kucoin.com"
 )
 
-// Re-exported from package transport so callers only need to import
-// package kucoin for the common case.
-type (
-	SiteType    = transport.SiteType
-	Credentials = transport.Credentials
-	Clock       = transport.Clock
-	Logger      = transport.Logger
-	RetryPolicy = transport.RetryPolicy
-)
+// SiteType re-exports transport.SiteType for callers of package kucoin.
+type SiteType = transport.SiteType
 
+// Credentials re-exports transport.Credentials for callers of package kucoin.
+type Credentials = transport.Credentials
+
+// Clock re-exports transport.Clock for callers of package kucoin.
+type Clock = transport.Clock
+
+// Logger re-exports transport.Logger for callers of package kucoin.
+type Logger = transport.Logger
+
+// RetryPolicy re-exports transport.RetryPolicy for callers of package kucoin.
+type RetryPolicy = transport.RetryPolicy
+
+// SiteTypeGlobal and SiteTypeAustralia re-export KuCoin's supported regional site types.
 const (
 	SiteTypeGlobal    = transport.SiteTypeGlobal
 	SiteTypeAustralia = transport.SiteTypeAustralia
 )
 
-var (
-	NewDefaultRetryPolicy = transport.NewDefaultRetryPolicy
-	NoRetry               = transport.NoRetry
-)
+// NewDefaultRetryPolicy re-exports transport.NewDefaultRetryPolicy.
+var NewDefaultRetryPolicy = transport.NewDefaultRetryPolicy
+
+// NoRetry re-exports transport.NoRetry.
+var NoRetry = transport.NoRetry
 
 // ClientConfig holds every configurable knob of a Client. Zero value is
 // usable; NewClient fills in defaults for unset fields.
@@ -90,30 +97,37 @@ type ClientConfig struct {
 // Option configures a ClientConfig at construction time.
 type Option func(*ClientConfig)
 
+// WithCredentials sets API credentials used for private endpoints.
 func WithCredentials(creds Credentials) Option {
 	return func(c *ClientConfig) { c.Credentials = creds }
 }
 
+// WithUTABaseURL overrides the base URL used for UTA REST requests.
 func WithUTABaseURL(url string) Option {
 	return func(c *ClientConfig) { c.UTABaseURL = url }
 }
 
+// WithClassicBaseURL overrides the base URL used for Classic Spot and Margin REST requests.
 func WithClassicBaseURL(url string) Option {
 	return func(c *ClientConfig) { c.ClassicBaseURL = url }
 }
 
+// WithClassicFuturesBaseURL overrides the base URL used for Classic Futures REST requests.
 func WithClassicFuturesBaseURL(url string) Option {
 	return func(c *ClientConfig) { c.ClassicFuturesBaseURL = url }
 }
 
+// WithHTTPClient sets the HTTP client used for REST requests.
 func WithHTTPClient(hc *http.Client) Option {
 	return func(c *ClientConfig) { c.HTTPClient = hc }
 }
 
+// WithTimeout sets the timeout of the default HTTP client.
 func WithTimeout(d time.Duration) Option {
 	return func(c *ClientConfig) { c.Timeout = d }
 }
 
+// WithSiteType sets the X-SITE-TYPE header sent with requests.
 func WithSiteType(siteType SiteType) Option {
 	return func(c *ClientConfig) { c.SiteType = siteType }
 }
@@ -126,10 +140,12 @@ func WithEnableNS(enabled bool) Option {
 	return func(c *ClientConfig) { c.EnableNS = enabled }
 }
 
+// WithClock sets the clock used for request timestamps and retry timing.
 func WithClock(clock Clock) Option {
 	return func(c *ClientConfig) { c.Clock = clock }
 }
 
+// WithLogger sets the logger used by REST transport.
 func WithLogger(logger Logger) Option {
 	return func(c *ClientConfig) { c.Logger = logger }
 }

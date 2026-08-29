@@ -39,7 +39,7 @@ type CrossMarginLeverageResult struct {
 	Leverage string `json:"leverage,omitempty"`
 }
 
-// LeverageEntry is a single currency's or symbol's current leverage.
+// Entry is a single currency's or symbol's current leverage.
 //
 // MarginMode's documented enum is literally "ISOLATE, CROSS" (missing
 // the "D") — likely a KuCoin doc typo, since every other endpoint in this
@@ -47,7 +47,7 @@ type CrossMarginLeverageResult struct {
 // callers can see exactly what KuCoin sent.
 //
 // Docs: https://www.kucoin.com/docs-new/rest/ua/get-leverage
-type LeverageEntry struct {
+type Entry struct {
 	Currency   string `json:"currency,omitempty"`
 	Symbol     string `json:"symbol,omitempty"`
 	Leverage   string `json:"leverage"`

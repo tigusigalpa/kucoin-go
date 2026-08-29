@@ -61,13 +61,14 @@ func WithAutoReconnect(enabled bool) Option {
 	return func(c *Client) { c.autoReconnect = enabled }
 }
 
-// WithPingInterval/WithPingTimeout override the ping cadence and
-// pong-wait timeout. Default to the values from the REST token response
-// (ws.Token.InstanceServers[0].PingInterval/PingTimeout) if left zero.
+// WithPingInterval overrides the ping cadence. It defaults to the value
+// from the REST token response if left zero.
 func WithPingInterval(d time.Duration) Option {
 	return func(c *Client) { c.pingInterval = d }
 }
 
+// WithPingTimeout overrides the pong-wait timeout. It defaults to the value
+// from the REST token response if left zero.
 func WithPingTimeout(d time.Duration) Option {
 	return func(c *Client) { c.pingTimeout = d }
 }

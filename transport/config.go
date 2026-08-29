@@ -12,6 +12,7 @@ import (
 // Docs: https://www.kucoin.com/docs-new/authentication
 type SiteType = string
 
+// SiteTypeGlobal and SiteTypeAustralia are the regional site-type header values accepted by KuCoin.
 const (
 	SiteTypeGlobal    SiteType = "global"
 	SiteTypeAustralia SiteType = "australia"
@@ -52,6 +53,7 @@ type Clock interface {
 // SystemClock is the real wall clock, used unless a Clock is injected.
 type SystemClock struct{}
 
+// Now returns the current wall-clock time.
 func (SystemClock) Now() time.Time { return time.Now() }
 
 // Logger is a minimal structured-logging interface. Implementations must
@@ -66,9 +68,16 @@ type Logger interface {
 // NoopLogger discards everything; the default unless a Logger is injected.
 type NoopLogger struct{}
 
+// Debug discards a debug log message.
 func (NoopLogger) Debug(string, ...any) {}
-func (NoopLogger) Info(string, ...any)  {}
-func (NoopLogger) Warn(string, ...any)  {}
+
+// Info discards an informational log message.
+func (NoopLogger) Info(string, ...any) {}
+
+// Warn discards a warning log message.
+func (NoopLogger) Warn(string, ...any) {}
+
+// Error discards an error log message.
 func (NoopLogger) Error(string, ...any) {}
 
 // RetryPolicy controls automatic retries for idempotent (GET) REST calls

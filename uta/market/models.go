@@ -13,6 +13,7 @@ import (
 // literals or these constants interchangeably.
 type TradeType = string
 
+// TradeTypeSpot and TradeTypeFutures are the UTA market-data product families.
 const (
 	TradeTypeSpot    TradeType = "SPOT"
 	TradeTypeFutures TradeType = "FUTURES"

@@ -81,6 +81,7 @@ func (c *Client) GetAllTickers(ctx context.Context) (*AllTickers, error) {
 // Interval is a kline granularity accepted by GetKlines.
 type Interval = string
 
+// Interval constants are the kline granularities accepted by GetKlines.
 const (
 	Interval1Min   Interval = "1min"
 	Interval3Min   Interval = "3min"
