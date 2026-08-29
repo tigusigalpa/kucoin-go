@@ -1,4 +1,6 @@
 /coverage.out
+/coverage.txt
+/coverage
 /coverage.html
 *.test
 .env
