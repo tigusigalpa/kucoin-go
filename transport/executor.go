@@ -84,7 +84,11 @@ func (e *Executor) do(ctx context.Context, method, path string, query map[string
 			}
 		}
 		if encoded := values.Encode(); encoded != "" {
-			endpoint += "?" + encoded
+			separator := "?"
+			if strings.Contains(endpoint, "?") {
+				separator = "&"
+			}
+			endpoint += separator + encoded
 		}
 	}
 

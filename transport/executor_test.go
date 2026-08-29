@@ -87,6 +87,24 @@ func TestDoPublic_EncodesQueryParameters(t *testing.T) {
 	}
 }
 
+func TestDoPublic_AppendsQueryParametersToPathQuery(t *testing.T) {
+	exec, _ := newTestExecutor(t, func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Query().Get("existing"), "value"; got != want {
+			t.Errorf("existing = %q, want %q", got, want)
+		}
+		if got, want := r.URL.Query().Get("symbol"), "BTC-USDT"; got != want {
+			t.Errorf("symbol = %q, want %q", got, want)
+		}
+		_, _ = w.Write([]byte(`{"code":"200000","data":{}}`))
+	}, Credentials{})
+
+	if _, err := exec.DoPublic(context.Background(), http.MethodGet, "/api/market?existing=value", map[string]string{
+		"symbol": "BTC-USDT",
+	}, nil); err != nil {
+		t.Fatalf("DoPublic: %v", err)
+	}
+}
+
 func TestDo_ReturnsErrCredentialsRequiredLocally(t *testing.T) {
 	for _, creds := range []Credentials{
 		{},
