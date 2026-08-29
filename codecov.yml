@@ -16,3 +16,4 @@ coverage:
 comment: false
 ignore:
   - "examples/**"
+  - "internal/gendocs/**"

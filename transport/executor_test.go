@@ -317,3 +317,62 @@ func TestMapHTTPStatus_Success(t *testing.T) {
 		t.Errorf("expected nil for 200, got %v", err)
 	}
 }
+
+func TestMapHTTPStatus(t *testing.T) {
+	tests := []struct {
+		status int
+		want   error
+	}{
+		{http.StatusCreated, nil},
+		{http.StatusAccepted, nil},
+		{http.StatusNoContent, nil},
+		{http.StatusBadRequest, ErrBadRequest},
+		{http.StatusUnauthorized, ErrUnauthorized},
+		{http.StatusForbidden, ErrForbiddenOrLimited},
+		{http.StatusNotFound, ErrNotFound},
+		{http.StatusMethodNotAllowed, ErrMethodNotAllowed},
+		{http.StatusUnsupportedMediaType, ErrUnsupportedMedia},
+		{http.StatusTooManyRequests, ErrRateLimited},
+		{http.StatusInternalServerError, ErrServerError},
+		{http.StatusServiceUnavailable, ErrServiceUnavailable},
+		{http.StatusBadGateway, ErrServerError},
+		{http.StatusTeapot, ErrBadRequest},
+		{http.StatusMultipleChoices, nil},
+	}
+
+	for _, test := range tests {
+		t.Run(http.StatusText(test.status), func(t *testing.T) {
+			if got := MapHTTPStatus(test.status); !errors.Is(got, test.want) {
+				t.Errorf("MapHTTPStatus(%d) = %v, want %v", test.status, got, test.want)
+			}
+		})
+	}
+}
+
+func TestCredentialsAndRetryPolicyDefaults(t *testing.T) {
+	if !(Credentials{}).IsZero() {
+		t.Fatal("empty credentials should be zero")
+	}
+	if (Credentials{APIKey: "key"}).IsZero() {
+		t.Fatal("non-empty credentials should not be zero")
+	}
+
+	policy := NewDefaultRetryPolicy()
+	if policy.MaxAttempts != 3 || policy.BaseDelay != 250*time.Millisecond || policy.MaxDelay != 5*time.Second || policy.MaxElapsed != 20*time.Second {
+		t.Fatalf("unexpected default retry policy: %+v", policy)
+	}
+
+	NoopLogger{}.Debug("debug")
+	NoopLogger{}.Info("info")
+	NoopLogger{}.Warn("warn")
+	NoopLogger{}.Error("error")
+}
+
+func TestRetryPolicyDelayForAttemptHandlesDisabledBackoff(t *testing.T) {
+	if got := (&RetryPolicy{}).delayForAttempt(1); got != 0 {
+		t.Errorf("delay without a base delay = %v, want 0", got)
+	}
+	if got := (&RetryPolicy{BaseDelay: time.Millisecond}).delayForAttempt(1); got != 0 {
+		t.Errorf("delay without a maximum delay = %v, want 0", got)
+	}
+}

@@ -205,3 +205,57 @@ func TestClient_WriteJSONIsSafeForConcurrentCalls(t *testing.T) {
 		}
 	}
 }
+
+func TestClient_HandlesControlMessagesAndResubscribeWithoutConnection(t *testing.T) {
+	client := NewClient("ws://example.test", "token", WithLogger(noopLogger{}))
+	noopLogger{}.Debug("debug")
+	noopLogger{}.Info("info")
+	noopLogger{}.Warn("warn")
+	noopLogger{}.Error("error")
+
+	client.closed = true
+	if !client.isClosed() {
+		t.Fatal("isClosed = false, want true")
+	}
+	client.reconnectLoop()
+	client.closed = false
+
+	client.welcomed = make(chan struct{})
+	client.handleMessage([]byte(`{"message":"welcome"}`))
+	select {
+	case <-client.welcomed:
+	default:
+		t.Fatal("welcome did not unblock Connect")
+	}
+
+	ack := make(chan struct{})
+	client.ackWaiters["ack-1"] = ack
+	client.handleMessage([]byte(`{"id":"ack-1","result":"true"}`))
+	select {
+	case <-ack:
+	default:
+		t.Fatal("ack waiter was not notified")
+	}
+	if _, ok := client.ackWaiters["ack-1"]; ok {
+		t.Fatal("ack waiter was not removed")
+	}
+
+	sub := &subscription{channel: "ticker", tradeType: "SPOT", ch: make(chan Push, 1)}
+	client.subscriptions["ticker:SPOT:"] = sub
+	client.handleMessage([]byte(`{"T":"ticker.SPOT","d":{"price":"1"}}`))
+	select {
+	case push := <-sub.ch:
+		if push.T != "ticker.SPOT" {
+			t.Fatalf("push type = %q, want ticker.SPOT", push.T)
+		}
+	default:
+		t.Fatal("push was not dispatched")
+	}
+
+	client.handleMessage([]byte(`not json`))
+	client.handleMessage([]byte(`{"type":"pong"}`))
+	client.subscriptions["ticker:FUTURES:"] = &subscription{channel: "ticker", tradeType: "FUTURES", ch: make(chan Push, 1)}
+	sub.ch <- Push{}
+	client.handleMessage([]byte(`{"T":"ticker.SPOT","d":{}}`))
+	client.resubscribeAll()
+}

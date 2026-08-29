@@ -206,3 +206,61 @@ func TestClient_WriteJSONIsSafeForConcurrentCalls(t *testing.T) {
 		}
 	}
 }
+
+func TestClient_HandlesControlMessagesAndResubscribeWithoutConnection(t *testing.T) {
+	client := NewClient("ws://example.test", "token", WithLogger(noopLogger{}), WithPingInterval(time.Second), WithPingTimeout(time.Second))
+	if client.pingInterval != time.Second || client.pingTimeout != time.Second {
+		t.Fatal("ping options were not applied")
+	}
+	noopLogger{}.Debug("debug")
+	noopLogger{}.Info("info")
+	noopLogger{}.Warn("warn")
+	noopLogger{}.Error("error")
+
+	client.closed = true
+	if !client.isClosed() {
+		t.Fatal("isClosed = false, want true")
+	}
+	client.reconnectLoop()
+	client.closed = false
+
+	client.welcomed = make(chan struct{})
+	client.handleMessage([]byte(`{"type":"welcome"}`))
+	select {
+	case <-client.welcomed:
+	default:
+		t.Fatal("welcome did not unblock Connect")
+	}
+
+	ack := make(chan struct{})
+	client.ackWaiters["ack-1"] = ack
+	client.handleMessage([]byte(`{"id":"ack-1","type":"ack"}`))
+	select {
+	case <-ack:
+	default:
+		t.Fatal("ack waiter was not notified")
+	}
+	if _, ok := client.ackWaiters["ack-1"]; ok {
+		t.Fatal("ack waiter was not removed")
+	}
+
+	sub := &subscription{topic: "/market/ticker:BTC-USDT", ch: make(chan Message, 1)}
+	client.subscriptions[sub.topic] = sub
+	client.handleMessage([]byte(`{"type":"message","topic":"/market/ticker:BTC-USDT","data":{"price":"1"}}`))
+	select {
+	case message := <-sub.ch:
+		if message.Topic != sub.topic {
+			t.Fatalf("topic = %q, want %q", message.Topic, sub.topic)
+		}
+	default:
+		t.Fatal("push was not dispatched")
+	}
+
+	client.handleMessage([]byte(`not json`))
+	client.handleMessage([]byte(`{"type":"pong"}`))
+	client.handleMessage([]byte(`{"type":"error"}`))
+	client.handleMessage([]byte(`{"type":"message","topic":"/market/unknown","data":{}}`))
+	sub.ch <- Message{}
+	client.handleMessage([]byte(`{"type":"message","topic":"/market/ticker:BTC-USDT","data":{}}`))
+	client.resubscribeAll()
+}

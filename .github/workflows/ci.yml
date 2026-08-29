@@ -33,6 +33,14 @@ jobs:
       - name: Run static analysis
         run: go vet ./...
       - name: Run tests with the race detector
-        run: go test -race ./...
+        run: go test -race -covermode=atomic -coverprofile=coverage.txt ./...
+      - name: Upload coverage to Codecov
+        if: matrix.go-version == '1.22.x'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.txt
+          flags: unit
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
       - name: Verify generated endpoint documentation
         run: go run ./internal/gendocs && git diff --exit-code -- docs/ENDPOINTS.md
