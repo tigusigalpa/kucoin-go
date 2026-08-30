@@ -216,3 +216,45 @@ func TestGetTradeStatistics(t *testing.T) {
 		t.Errorf("unexpected stats: %+v", stats)
 	}
 }
+
+func TestMarketQueriesIncludeAllOptionalFilters(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		response := `{"code":"200000","data":{}}`
+		switch r.URL.Path {
+		case "/api/ua/v1/market/ticker":
+			if query.Get("symbol") != "BTC-USDT" {
+				t.Errorf("unexpected ticker query: %v", query)
+			}
+		case "/api/ua/v1/market/orderbook":
+			if query.Get("limit") != "100" || query.Get("rpiFilter") != "1" {
+				t.Errorf("unexpected order-book query: %v", query)
+			}
+		case "/api/ua/v1/market/currency":
+			if query.Get("currency") != "BTC" || query.Get("chain") != "btc" {
+				t.Errorf("unexpected currency query: %v", query)
+			}
+			response = `{"code":"200000","data":[]}`
+		case "/api/ua/v1/market/announcement":
+			if query.Get("language") != "en_US" || query.Get("type") != "SYSTEM" || query.Get("pageNumber") != "2" || query.Get("pageSize") != "20" || query.Get("startTime") != "100" || query.Get("endTime") != "200" {
+				t.Errorf("unexpected announcement query: %v", query)
+			}
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(response))
+	})
+
+	if _, err := client.GetTickers(context.Background(), TradeTypeSpot, "BTC-USDT"); err != nil {
+		t.Fatalf("GetTickers: %v", err)
+	}
+	if _, err := client.GetOrderBook(context.Background(), TradeTypeSpot, "BTC-USDT", GetOrderBookOptions{Limit: 100, RPIFilter: 1}); err != nil {
+		t.Fatalf("GetOrderBook: %v", err)
+	}
+	if _, err := client.GetCurrency(context.Background(), "BTC", "btc"); err != nil {
+		t.Fatalf("GetCurrency: %v", err)
+	}
+	if _, err := client.GetAnnouncements(context.Background(), GetAnnouncementsOptions{Language: "en_US", Type: "SYSTEM", PageNumber: 2, PageSize: 20, StartTime: 100, EndTime: 200}); err != nil {
+		t.Fatalf("GetAnnouncements: %v", err)
+	}
+}

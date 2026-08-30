@@ -86,3 +86,18 @@ func TestGetLeverage_ToleratesIsolateTypoAndIsolatedSpelling(t *testing.T) {
 		t.Errorf("unexpected marginMode: %q", entries[1].MarginMode)
 	}
 }
+
+func TestGetLeverage_SendsCurrencyAndMarginModeFilters(t *testing.T) {
+	var gotQuery url.Values
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		_, _ = w.Write([]byte(`{"code":"200000","data":[]}`))
+	})
+
+	if _, err := client.GetLeverage(context.Background(), "MARGIN", "USDT", "", "CROSS"); err != nil {
+		t.Fatalf("GetLeverage: %v", err)
+	}
+	if gotQuery.Get("currency") != "USDT" || gotQuery.Get("marginMode") != "CROSS" {
+		t.Errorf("unexpected query: %v", gotQuery)
+	}
+}

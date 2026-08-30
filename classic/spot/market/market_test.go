@@ -178,3 +178,30 @@ func TestKline_UnmarshalJSON_RoundTrip(t *testing.T) {
 		t.Errorf("unexpected kline: %+v", k)
 	}
 }
+
+func TestMarketQueriesIncludeOptionalFilters(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		switch r.URL.Path {
+		case "/api/v3/currencies/BTC":
+			if query.Get("chain") != "btc" {
+				t.Errorf("unexpected currency query: %v", query)
+			}
+			_, _ = w.Write([]byte(`{"code":"200000","data":{"currency":"BTC"}}`))
+		case "/api/v2/symbols":
+			if query.Get("market") != "ALTS" {
+				t.Errorf("unexpected symbols query: %v", query)
+			}
+			_, _ = w.Write([]byte(`{"code":"200000","data":[]}`))
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	})
+
+	if _, err := client.GetCurrency(context.Background(), "BTC", "btc"); err != nil {
+		t.Fatalf("GetCurrency: %v", err)
+	}
+	if _, err := client.GetAllSymbols(context.Background(), "ALTS"); err != nil {
+		t.Fatalf("GetAllSymbols: %v", err)
+	}
+}

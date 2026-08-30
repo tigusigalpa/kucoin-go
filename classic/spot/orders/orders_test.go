@@ -240,3 +240,43 @@ func TestGetTradeHistory_UsesIntegerIDs(t *testing.T) {
 		t.Errorf("unexpected page: %+v", page)
 	}
 }
+
+func TestOrderListQueriesIncludeAllOptionalFilters(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		switch r.URL.Path {
+		case "/api/v1/hf/orders/done":
+			if query.Get("side") != "buy" || query.Get("type") != "limit" || query.Get("lastId") != "1" || query.Get("limit") != "20" || query.Get("startAt") != "100" || query.Get("endAt") != "200" {
+				t.Errorf("unexpected closed-orders query: %v", query)
+			}
+		case "/api/v1/hf/fills":
+			if query.Get("orderId") != "o1" || query.Get("side") != "buy" || query.Get("type") != "limit" || query.Get("lastId") != "1" || query.Get("limit") != "20" || query.Get("startAt") != "100" || query.Get("endAt") != "200" {
+				t.Errorf("unexpected trade-history query: %v", query)
+			}
+		case "/api/v1/stop-order":
+			if query.Get("symbol") != "BTC-USDT" || query.Get("side") != "buy" || query.Get("type") != "limit" || query.Get("tradeType") != "TRADE" || query.Get("orderIds") != "s1,s2" || query.Get("stop") != "loss" || query.Get("startAt") != "100" || query.Get("endAt") != "200" || query.Get("currentPage") != "2" || query.Get("pageSize") != "20" {
+				t.Errorf("unexpected stop-order query: %v", query)
+			}
+		case "/api/v3/oco/orders":
+			if query.Get("symbol") != "BTC-USDT" || query.Get("orderIds") != "o1,o2" || query.Get("startAt") != "100" || query.Get("endAt") != "200" || query.Get("currentPage") != "2" || query.Get("pageSize") != "20" {
+				t.Errorf("unexpected OCO query: %v", query)
+			}
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"code":"200000","data":{}}`))
+	})
+
+	if _, err := client.GetClosedOrders(context.Background(), "BTC-USDT", GetClosedOrdersOptions{Side: "buy", Type: "limit", LastID: 1, Limit: 20, StartAt: 100, EndAt: 200}); err != nil {
+		t.Fatalf("GetClosedOrders: %v", err)
+	}
+	if _, err := client.GetTradeHistory(context.Background(), "BTC-USDT", GetTradeHistoryOptions{OrderID: "o1", Side: "buy", Type: "limit", LastID: 1, Limit: 20, StartAt: 100, EndAt: 200}); err != nil {
+		t.Fatalf("GetTradeHistory: %v", err)
+	}
+	if _, err := client.GetStopOrderList(context.Background(), GetStopOrderListOptions{Symbol: "BTC-USDT", Side: "buy", Type: "limit", TradeType: "TRADE", OrderIDs: "s1,s2", Stop: "loss", StartAt: 100, EndAt: 200, CurrentPage: 2, PageSize: 20}); err != nil {
+		t.Fatalf("GetStopOrderList: %v", err)
+	}
+	if _, err := client.GetOCOOrderList(context.Background(), GetOCOOrderListOptions{Symbol: "BTC-USDT", OrderIDs: "o1,o2", StartAt: 100, EndAt: 200, CurrentPage: 2, PageSize: 20}); err != nil {
+		t.Fatalf("GetOCOOrderList: %v", err)
+	}
+}

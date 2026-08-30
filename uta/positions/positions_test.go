@@ -139,3 +139,34 @@ func TestGetMarginMode(t *testing.T) {
 		t.Errorf("unexpected result: %+v", result)
 	}
 }
+
+func TestPositionQueriesIncludeAllOptionalFilters(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		switch r.URL.Path {
+		case "/api/ua/v1/unified/position/open-list":
+			if query.Get("symbol") != "BTCUSDTM" || query.Get("pageNumber") != "2" || query.Get("pageSize") != "50" {
+				t.Errorf("unexpected open-position query: %v", query)
+			}
+			_, _ = w.Write([]byte(`{"code":"200000","data":[]}`))
+		case "/api/ua/v1/position/history", "/api/ua/v1/position/funding-history":
+			if query.Get("symbol") != "BTCUSDTM" || query.Get("startAt") != "100" || query.Get("endAt") != "200" || query.Get("lastId") != "300" || query.Get("pageSize") != "25" {
+				t.Errorf("unexpected history query for %s: %v", r.URL.Path, query)
+			}
+			_, _ = w.Write([]byte(`{"code":"200000","data":{"items":[]}}`))
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	})
+
+	if _, err := client.GetPositions(context.Background(), GetPositionsOptions{Symbol: "BTCUSDTM", PageNumber: 2, PageSize: 50}); err != nil {
+		t.Fatalf("GetPositions: %v", err)
+	}
+	filters := GetPositionHistoryOptions{Symbol: "BTCUSDTM", StartAt: 100, EndAt: 200, LastID: 300, PageSize: 25}
+	if _, err := client.GetPositionHistory(context.Background(), filters); err != nil {
+		t.Fatalf("GetPositionHistory: %v", err)
+	}
+	if _, err := client.GetFundingFeeHistory(context.Background(), GetFundingFeeHistoryOptions(filters)); err != nil {
+		t.Fatalf("GetFundingFeeHistory: %v", err)
+	}
+}

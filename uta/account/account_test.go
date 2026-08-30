@@ -95,11 +95,14 @@ func TestGetLedger_SendsFilters(t *testing.T) {
 		_, _ = w.Write([]byte(`{"code":"200000","data":{"lastId":42,"items":[{"accountType":"UNIFIED","id":"1","currency":"USDT","direction":"IN","businessType":"TRADE_EXCHANGE","amount":"10","balance":"110","fee":"0","tax":"0","remark":"","ts":1700000000000000000}]}}`))
 	})
 
-	result, err := client.GetLedger(context.Background(), "UNIFIED", GetLedgerOptions{Direction: "IN", PageSize: 50})
+	result, err := client.GetLedger(context.Background(), "UNIFIED", GetLedgerOptions{
+		Currency: "USDT", Direction: "IN", BusinessType: "TRADE_EXCHANGE",
+		LastID: 1, StartAt: 100, EndAt: 200, PageSize: 50,
+	})
 	if err != nil {
 		t.Fatalf("GetLedger: %v", err)
 	}
-	if gotQuery.Get("accountType") != "UNIFIED" || gotQuery.Get("direction") != "IN" || gotQuery.Get("pageSize") != "50" {
+	if gotQuery.Get("accountType") != "UNIFIED" || gotQuery.Get("currency") != "USDT" || gotQuery.Get("direction") != "IN" || gotQuery.Get("businessType") != "TRADE_EXCHANGE" || gotQuery.Get("lastId") != "1" || gotQuery.Get("startAt") != "100" || gotQuery.Get("endAt") != "200" || gotQuery.Get("pageSize") != "50" {
 		t.Errorf("unexpected query: %v", gotQuery)
 	}
 	if result.LastID != 42 || len(result.Items) != 1 || result.Items[0].Currency != "USDT" {

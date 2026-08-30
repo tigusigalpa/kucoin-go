@@ -258,3 +258,36 @@ func TestGetTradeHistory_SendsFilters(t *testing.T) {
 		t.Errorf("unexpected result: %+v", result)
 	}
 }
+
+func TestOrderListQueriesIncludeAllOptionalFilters(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		switch r.URL.Path {
+		case "/api/ua/v1/unified/order/open-list":
+			if query.Get("symbol") != "BTC-USDT" || query.Get("orderFilter") != "ADVANCED" || query.Get("pageNumber") != "2" || query.Get("pageSize") != "50" {
+				t.Errorf("unexpected open-order query: %v", query)
+			}
+		case "/api/ua/v1/unified/order/history":
+			if query.Get("symbol") != "BTC-USDT" || query.Get("side") != "BUY" || query.Get("orderFilter") != "ADVANCED" || query.Get("startAt") != "100" || query.Get("endAt") != "200" || query.Get("lastId") != "300" || query.Get("pageSize") != "25" {
+				t.Errorf("unexpected order-history query: %v", query)
+			}
+		case "/api/ua/v1/unified/order/execution":
+			if query.Get("symbol") != "BTC-USDT" || query.Get("orderId") != "o1" || query.Get("side") != "SELL" || query.Get("startAt") != "100" || query.Get("endAt") != "200" || query.Get("lastId") != "cursor" || query.Get("pageSize") != "25" {
+				t.Errorf("unexpected trade-history query: %v", query)
+			}
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"code":"200000","data":{"items":[]}}`))
+	})
+
+	if _, err := client.GetOpenOrderList(context.Background(), "SPOT", GetOpenOrderListOptions{Symbol: "BTC-USDT", OrderFilter: "ADVANCED", PageNumber: 2, PageSize: 50}); err != nil {
+		t.Fatalf("GetOpenOrderList: %v", err)
+	}
+	if _, err := client.GetOrderHistory(context.Background(), "SPOT", GetOrderHistoryOptions{Symbol: "BTC-USDT", Side: "BUY", OrderFilter: "ADVANCED", StartAt: 100, EndAt: 200, LastID: 300, PageSize: 25}); err != nil {
+		t.Fatalf("GetOrderHistory: %v", err)
+	}
+	if _, err := client.GetTradeHistory(context.Background(), "SPOT", GetTradeHistoryOptions{Symbol: "BTC-USDT", OrderID: "o1", Side: "SELL", StartAt: 100, EndAt: 200, LastID: "cursor", PageSize: 25}); err != nil {
+		t.Fatalf("GetTradeHistory: %v", err)
+	}
+}
