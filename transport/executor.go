@@ -64,6 +64,21 @@ func (e *Executor) DoPublic(ctx context.Context, method, path string, query map[
 	return e.do(ctx, method, path, query, nil, false, result)
 }
 
+// DoPublicValues issues an unauthenticated request with URL query values.
+// Unlike DoPublic, it preserves repeated keys (for example,
+// currencies=BTC&currencies=ETH), which several current KuCoin endpoints
+// require.
+func (e *Executor) DoPublicValues(ctx context.Context, method, path string, query url.Values, result interface{}) (*ResponseMeta, error) {
+	if encoded := query.Encode(); encoded != "" {
+		separator := "?"
+		if strings.Contains(path, "?") {
+			separator = "&"
+		}
+		path += separator + encoded
+	}
+	return e.do(ctx, method, path, nil, nil, false, result)
+}
+
 // Do issues an authenticated request, signing it with the configured
 // credentials. Returns ErrCredentialsRequired locally (no network call)
 // if complete credentials were not configured.

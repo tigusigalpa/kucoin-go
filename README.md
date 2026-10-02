@@ -7,14 +7,14 @@
 [![Go vet](https://img.shields.io/badge/code%20analysis-go%20vet-brightgreen)](https://github.com/tigusigalpa/kucoin-go/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/tigusigalpa/kucoin-go/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/tigusigalpa/kucoin-go/actions/workflows/codeql.yml)
 [![codecov](https://codecov.io/gh/tigusigalpa/kucoin-go/graph/badge.svg)](https://codecov.io/gh/tigusigalpa/kucoin-go)
-[![Go Report Card](https://goreportcard.com/badge/github.com/tigusigalpa/kucoin-go)](https://goreportcard.com/report/github.com/tigusigalpa/kucoin-go)
 [![Go Reference](https://pkg.go.dev/badge/github.com/tigusigalpa/kucoin-go.svg)](https://pkg.go.dev/github.com/tigusigalpa/kucoin-go)
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.22-blue)](go.mod)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-An idiomatic Go client for KuCoin's **UTA (Unified Trading Account)** and **Classic (Spot/Margin/Futures)** REST and WebSocket APIs, written from scratch against KuCoin's current `docs-new` documentation — not a wrapper around the official Universal SDK.
-
-**Package:** a matching PHP/Laravel SDK is available at [tigusigalpa/kucoin-php](https://github.com/tigusigalpa/kucoin-php).
+An independent, idiomatic Go client for KuCoin's **UTA (Unified Trading
+Account)** and **Classic (Spot/Margin/Futures)** REST and WebSocket APIs,
+written from scratch against KuCoin's current `docs-new` documentation — not
+a wrapper around the official Universal SDK or any application framework.
 
 ---
 
@@ -28,13 +28,20 @@ If you need full API coverage today, use the official SDK. If you want a smaller
 
 ## Status
 
-**This is an early, honest checkpoint, not a finished library.** UTA's public market data plus private account/orders/positions/leverage are implemented and tested, alongside Classic Spot (market data + HF order management + the stop-order and OCO-order families + Disconnect Cancel Protocol), a Classic Futures seed set (place/test/query orders, position/margin/position-mode reads — not cancel, and not the full stop/OCO order family), and a Classic Margin seed set (symbols/mark-price/config/risk-limit market data, core order management, stop/OCO orders, borrow/repay/interest — confirmed to be a distinct parallel endpoint family from Classic Spot's, not a shared one), plus a WebSocket layer (bullet-token issuance for all three account/host combinations, plus a generic reconnecting client for both the UTA and Classic wire protocols — see [WebSocket examples](#websocket-examples)). Classic Margin's lending-side ("Credit") endpoints and Phase 3 specialty domains are **not yet implemented**. See [docs/ENDPOINTS.md](docs/ENDPOINTS.md) for the exact, generated list of what's covered, with a direct KuCoin documentation link per method.
+**Current UTA REST v2 market data is complete (23 documented methods) and
+covered by mock HTTP tests.** The SDK also retains its UTA v1 compatibility
+services, broad Classic Spot order support, and targeted Classic Margin and
+Futures services. It is not yet a full KuCoin SDK: current UTA v2
+account/funding/trading/transfer services, much of Classic, WebSocket order
+entry, and most typed WebSocket channels remain absent. See the factual
+[coverage matrix](docs/API_COVERAGE.md) and generated
+[method map](docs/ENDPOINTS.md) before choosing it for a workflow.
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 — reliable core | Shared HTTP/auth/error/retry infra; UTA market/account/orders; Classic Spot market/orders; Classic Futures market/order/position; UTA + Classic WS core channels | **Done** — shared infra, UTA Market/Account/Orders, **Classic Spot**, **Classic Futures seed set**, and a generic reconnecting WS client (both protocols) are done; Futures market-data endpoints and hand-typed per-channel WS payloads remain open |
-| 2 — trading breadth | Classic Margin; advanced Spot/Margin orders; **UTA positions/leverage**; more WS channels | **Partial** — UTA Positions/Leverage, a **Classic Margin seed set** (market data, order management, stop/OCO orders, borrow/repay/interest), and **Classic Spot stop/OCO orders** are done; Margin's lending-side ("Credit") endpoints not started |
-| 3 — specialty domains | Account/funding/subaccounts/deposits/withdrawals, Earn, VIP Lending, Convert, Broker, Affiliate, Copy Trading | Not started |
+| UTA REST v2 Market Data | All 23 currently listed methods | **Done** — typed client at `Client.UTA.V2.Market` |
+| UTA REST v2 account, funding, orders and positions | Current v2 private endpoints | **Absent** — retained v1 services are not counted as v2 coverage |
+| Classic and WebSocket breadth | Classic private domains, Futures data, typed channel models, WS trade | **Partial** — exact boundary is in the coverage matrix |
 
 We'd rather ship a small, correct surface than a large, half-tested one. If your use case needs something from Phase 2 or 3, please open an issue — real demand is what decides what gets built next.
 
@@ -67,7 +74,9 @@ Requires Go 1.22 or newer.
 
 ## Quick start
 
-Public market data works with zero credentials — a good way to try the SDK before deciding whether to trust it with real keys:
+Public market data works with zero credentials — a good way to try the SDK
+before deciding whether to trust it with real keys. New code should prefer
+the current UTA v2 surface:
 
 ```go
 package main
@@ -78,13 +87,13 @@ import (
 	"log"
 
 	kucoin "github.com/tigusigalpa/kucoin-go"
-	"github.com/tigusigalpa/kucoin-go/uta/market"
+	utav2market "github.com/tigusigalpa/kucoin-go/uta/v2/market"
 )
 
 func main() {
 	client := kucoin.NewClient()
 
-	tickers, err := client.UTA.Market.GetTickers(context.Background(), market.TradeTypeSpot, "BTC-USDT")
+	tickers, err := client.UTA.V2.Market.GetTickers(context.Background(), utav2market.TradeTypeSpot, "BTC-USDT")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -92,7 +101,7 @@ func main() {
 }
 ```
 
-Runnable example: [examples/uta_market](examples/uta_market/main.go).
+Runnable example: [examples/uta_v2_market](examples/uta_v2_market/main.go).
 
 ---
 
@@ -310,7 +319,11 @@ Classic account/order examples aren't shown here because that domain isn't imple
 
 ## WebSocket examples
 
-Classic and UTA use two structurally different wire protocols, so there are two client types: `websocket/classic` and `websocket/uta`. Both handle reconnect-with-backoff, automatic resubscription, and ping/pong heartbeats; neither is embedded in the REST `Client` — fetch a token via REST, then hand it to the WS client yourself, so REST and WS lifecycles stay independent.
+Classic and UTA use two structurally different wire protocols, so there are
+two client types: `websocket/classic` and `websocket/uta`. Both handle
+reconnect-with-backoff, automatic resubscription, and ping/pong heartbeats.
+Classic sockets use their REST-issued bullet token; current UTA v2 private
+channels authenticate explicitly after the welcome frame.
 
 **Classic Spot (public channel, no credentials needed):**
 
@@ -343,17 +356,19 @@ for msg := range msgs {
 }
 ```
 
-**UTA (private channel — note KuCoin documents the UTA WebSocket API as pre-release/beta, not for production/live trading):**
+**UTA v2 private channel (signed authentication after welcome):**
 
 ```go
-import utaws "github.com/tigusigalpa/kucoin-go/websocket/uta"
+import (
+	kucoin "github.com/tigusigalpa/kucoin-go"
+	utaws "github.com/tigusigalpa/kucoin-go/websocket/uta"
+)
 
-token, err := client.UTA.Ws.GetPrivateToken(ctx)
-if err != nil {
-	log.Fatal(err)
-}
-
-ws := utaws.NewClient(utaws.PrivateWSURL, token.Token)
+ws := utaws.NewClient(utaws.PrivateWSURL, "", utaws.WithCredentials(kucoin.Credentials{
+	APIKey:        os.Getenv("KUCOIN_API_KEY"),
+	APISecret:     os.Getenv("KUCOIN_API_SECRET"),
+	APIPassphrase: os.Getenv("KUCOIN_API_PASSPHRASE"),
+}))
 if err := ws.Connect(ctx); err != nil {
 	log.Fatal(err)
 }
@@ -368,7 +383,11 @@ for push := range pushes {
 }
 ```
 
-Only a handful of channels are hand-typed as models so far; `Message.Data`/`Push.Data` is raw `json.RawMessage` for everything else — decode it yourself per KuCoin's documented per-channel payload shape. `Classic.Futures.Ws` works the same way as `Classic.Spot.Ws`, against the `api-futures.kucoin.com` host.
+`SubscribeTicker` returns a typed UTA ticker stream. `Message.Data`/
+`Push.Data` remains raw `json.RawMessage` for every other channel; typed
+decoders are still needed before those channels can be called a
+production-ready typed API. `Classic.Futures.Ws` works the same way as
+`Classic.Spot.Ws`, against the `api-futures.kucoin.com` host.
 
 ---
 
@@ -390,7 +409,11 @@ Only a handful of channels are hand-typed as models so far; `Message.Data`/`Push
 
 ## Endpoint reference
 
-Full, generated coverage map with direct KuCoin doc links: [docs/ENDPOINTS.md](docs/ENDPOINTS.md). Source manifest: [internal/endpoints.yaml](internal/endpoints.yaml). Official docs map: [KuCoin `llms.txt`](https://www.kucoin.com/docs-new/llms.txt).
+Full, generated coverage map with direct KuCoin doc links:
+[docs/ENDPOINTS.md](docs/ENDPOINTS.md). Factual complete/partial/absent
+matrix: [docs/API_COVERAGE.md](docs/API_COVERAGE.md). Source manifest:
+[internal/endpoints.yaml](internal/endpoints.yaml). Official docs map:
+[KuCoin `llms.txt`](https://www.kucoin.com/docs-new/llms.txt).
 
 Before wiring up a new integration, it's worth skimming this file — it tells you at a glance whether the endpoint you need already exists, or whether you'd be the first to ask for it.
 
@@ -420,7 +443,10 @@ No test, example, or CI job in this repository places a live trading, transfer, 
 
 ## Compatibility and migration
 
-Pre-1.0: breaking changes may happen between minor versions while Phase 1 is being built out; see [CHANGELOG.md](CHANGELOG.md). This library is not a drop-in replacement for the official [KuCoin Universal SDK](https://github.com/Kucoin/kucoin-universal-sdk) — method names, types, and error handling are intentionally different (see the design notes in this README and [CONTRIBUTING.md](CONTRIBUTING.md)).
+Pre-1.0: breaking changes may happen between minor versions; see
+[CHANGELOG.md](CHANGELOG.md). This library is not a drop-in replacement for
+the official [KuCoin Universal SDK](https://github.com/Kucoin/kucoin-universal-sdk)
+— method names, types, and error handling are intentionally different.
 
 ---
 
@@ -460,6 +486,6 @@ Igor Sazonov — [@tigusigalpa](https://github.com/tigusigalpa) — sovletig@gma
 
 ---
 
-*Not affiliated with KuCoin. This is an early checkpoint — verify coverage in [docs/ENDPOINTS.md](docs/ENDPOINTS.md) before relying on any endpoint.*
+*Not affiliated with KuCoin. Verify coverage in [docs/API_COVERAGE.md](docs/API_COVERAGE.md) before relying on any endpoint.*
 </content>
 </invoke>

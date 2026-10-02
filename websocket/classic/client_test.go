@@ -112,6 +112,18 @@ func TestClient_ConnectTimesOutWithoutWelcome(t *testing.T) {
 	if err := client.Connect(ctx); err == nil {
 		t.Fatal("expected Connect to fail without a welcome message")
 	}
+	client.mu.RLock()
+	conn := client.conn
+	done := client.done
+	client.mu.RUnlock()
+	if conn != nil {
+		t.Fatal("connection remained active after welcome timeout")
+	}
+	select {
+	case <-done:
+	default:
+		t.Fatal("connection worker was not stopped after welcome timeout")
+	}
 }
 
 func TestClient_Close(t *testing.T) {
@@ -136,6 +148,88 @@ func TestClient_Close(t *testing.T) {
 	}
 	if err := client.Close(); err != nil {
 		t.Fatalf("second Close should be a no-op, got: %v", err)
+	}
+}
+
+func TestClient_CloseClosesSubscriptionChannels(t *testing.T) {
+	server := fakeServer(t, func(conn *websocket.Conn) {
+		for {
+			var message map[string]any
+			if err := conn.ReadJSON(&message); err != nil {
+				return
+			}
+			if message["type"] == "subscribe" {
+				_ = conn.WriteJSON(map[string]string{"id": message["id"].(string), "type": "ack"})
+			}
+		}
+	})
+	defer server.Close()
+
+	client := NewClient(wsURL(server.URL), "test-token", WithAutoReconnect(false))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	msgs, err := client.Subscribe(ctx, "/market/ticker:BTC-USDT", false)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case _, ok := <-msgs:
+		if ok {
+			t.Fatal("subscription channel is still open after Close")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("subscription channel was not closed")
+	}
+}
+
+func TestClient_ReconnectsAndResubscribes(t *testing.T) {
+	var connections int
+	var mu sync.Mutex
+	resubscribed := make(chan struct{})
+	var once sync.Once
+	server := fakeServer(t, func(conn *websocket.Conn) {
+		mu.Lock()
+		connections++
+		connection := connections
+		mu.Unlock()
+		for {
+			var message map[string]any
+			if err := conn.ReadJSON(&message); err != nil {
+				return
+			}
+			if message["type"] != "subscribe" {
+				continue
+			}
+			if connection == 1 {
+				_ = conn.WriteJSON(map[string]string{"id": message["id"].(string), "type": "ack"})
+				_ = conn.Close()
+				return
+			}
+			once.Do(func() { close(resubscribed) })
+		}
+	})
+	defer server.Close()
+
+	client := NewClient(wsURL(server.URL), "test-token")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer client.Close()
+	if _, err := client.Subscribe(ctx, "/market/ticker:BTC-USDT", false); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	select {
+	case <-resubscribed:
+	case <-time.After(4 * time.Second):
+		t.Fatal("client did not resubscribe after an unexpected disconnect")
 	}
 }
 
@@ -263,4 +357,20 @@ func TestClient_HandlesControlMessagesAndResubscribeWithoutConnection(t *testing
 	sub.ch <- Message{}
 	client.handleMessage([]byte(`{"type":"message","topic":"/market/ticker:BTC-USDT","data":{}}`))
 	client.resubscribeAll()
+}
+
+func TestClient_IgnoresFramesFromSupersededConnection(t *testing.T) {
+	client := NewClient("ws://example.test", "token")
+	active := &websocket.Conn{}
+	stale := &websocket.Conn{}
+	client.conn = active
+	client.done = make(chan struct{})
+	client.welcomed = make(chan struct{})
+
+	client.handleMessageForConnection(stale, make(chan struct{}), []byte(`{"type":"welcome"}`))
+	select {
+	case <-client.welcomed:
+		t.Fatal("a stale connection completed the active welcome handshake")
+	default:
+	}
 }

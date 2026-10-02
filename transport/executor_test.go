@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 )
@@ -84,6 +85,23 @@ func TestDoPublic_EncodesQueryParameters(t *testing.T) {
 		"empty":  "",
 	}, nil); err != nil {
 		t.Fatalf("DoPublic: %v", err)
+	}
+}
+
+func TestDoPublicValues_PreservesRepeatedQueryParameters(t *testing.T) {
+	exec, _ := newTestExecutor(t, func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Query()["currencies"], []string{"BTC", "ETH"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+			t.Errorf("currencies = %v, want %v", got, want)
+		}
+		if got, want := r.URL.Query().Get("base"), "USD"; got != want {
+			t.Errorf("base = %q, want %q", got, want)
+		}
+		_, _ = w.Write([]byte(`{"code":"200000","data":{}}`))
+	}, Credentials{})
+
+	query := url.Values{"base": {"USD"}, "currencies": {"BTC", "ETH"}}
+	if _, err := exec.DoPublicValues(context.Background(), http.MethodGet, "/api/market", query, nil); err != nil {
+		t.Fatalf("DoPublicValues: %v", err)
 	}
 }
 

@@ -12,11 +12,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.22.x'
       - name: Run tests with coverage
         run: go test -race -coverprofile=coverage.out ./...
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5
         with:
           files: ./coverage.out
+          flags: unit
           token: ${{ secrets.CODECOV_TOKEN }}

@@ -8,6 +8,25 @@ project follows [SemVer](https://semver.org/).
 
 ### Added
 
+- `Client.UTA.V2.Market`: all 23 methods in KuCoin's current UTA REST v2
+  Market Data group, including current/funding-history/open-interest data,
+  order book, risk tiers, interest-rate index, fiat/custody/service/KYC/IP
+  helpers and repeated-query currency filters. This additive service leaves
+  existing `Client.UTA.*` v1 compatibility APIs unchanged.
+- `transport.Executor.DoPublicValues`, used where KuCoin requires repeated
+  query keys instead of a comma-delimited parameter.
+- `websocket/uta.WithCredentials`: explicit signed private-channel
+  authentication after the UTA v2 welcome frame, authentication failure
+  reporting, and automatic re-authentication during reconnect. UTA ticker
+  now has `SubscribeTicker`, a typed stream that avoids caller JSON parsing.
+- Compatibility note: `websocket/uta.Client.Subscribe` now waits for the
+  documented acknowledgement (up to 10 seconds) instead of reporting success
+  immediately after the write. Its signature is unchanged; this behavioural
+  correction lets callers observe rejected subscriptions deterministically.
+- [API coverage matrix](docs/API_COVERAGE.md), a current-docs complete /
+  partial / absent inventory; `examples/uta_v2_market` for public UTA v2
+  ticker and funding-rate calls.
+
 - Shared core: `Credentials`, `ClientConfig`/`Option`s, injectable `Clock`
   and `Logger`, conservative GET-only `RetryPolicy` with exponential
   backoff + jitter.
@@ -64,7 +83,7 @@ project follows [SemVer](https://semver.org/).
   obviously malformed requests before any network call.
 - `classic/futures/positions`: a Phase-1 seed set — GetPositionDetails,
   GetPositionList, GetMarginMode, GetPositionMode.
-- WebSocket bullet-token issuance: `uta/ws.GetPrivateToken`,
+- WebSocket bullet-token issuance: legacy `uta/ws.GetPrivateToken`,
   `classic/spot/ws.{GetPublicToken,GetPrivateToken}`,
   `classic/futures/ws.{GetPublicToken,GetPrivateToken}`. Exposed on the
   main `Client` as `UTA.Ws`, `Classic.Spot.Ws`, `Classic.Futures.Ws`.
@@ -74,14 +93,12 @@ project follows [SemVer](https://semver.org/).
   detection (`SetReadDeadline` extended on every received frame; a missed
   heartbeat window surfaces as a read error and triggers reconnect),
   exponential-backoff reconnect (1s-60s cap), and automatic
-  resubscription after reconnect. `websocket/classic.Client.Subscribe`
-  blocks until KuCoin acknowledges the subscription;
-  `websocket/uta.Client.Subscribe` does not block on an ack, since UTA's
-  ack format is inconsistently documented — see the method's docblock.
-  Only a handful of channels are hand-typed; everything else is delivered
-  as raw `json.RawMessage` for the caller to decode. The UTA WebSocket API
-  is documented by KuCoin as pre-release/beta and unsuitable for
-  production — see the `websocket/uta` package docblock.
+  resubscription after reconnect. `websocket/classic.Client.Subscribe` and
+  `websocket/uta.Client.Subscribe` both wait for KuCoin's successful
+  subscription acknowledgement. Current UTA private channels use a signed
+  post-welcome authentication frame rather than the retained legacy token;
+  UTA ticker has a typed stream. Remaining channels are delivered as raw
+  `json.RawMessage` pending typed models.
 - `github.com/gorilla/websocket` added as the WebSocket transport
   dependency.
 - `classic/margin/market`: a seed set of Classic Margin's public
@@ -161,6 +178,15 @@ project follows [SemVer](https://semver.org/).
   against a live account in the method's docblock.
 
 ### Fixed
+
+- Classic and UTA WebSocket workers are now bound to their connection
+  generation. Frames from a superseded socket cannot complete a new handshake
+  or be delivered to current subscriptions; close and reconnect paths also
+  consistently close subscriber streams and cancel pending backoff waits.
+- GitHub Actions workflows now test and lint against the module's declared
+  Go 1.22 baseline instead of the unsupported Go 1.21 matrix entry, and all
+  Codecov uploads use the configured `unit` flag so the 80% policy applies
+  consistently.
 
 - `UTA.Market.GetOrderBook` now signs the request. A live smoke test
   during development confirmed this endpoint requires credentials (HTTP

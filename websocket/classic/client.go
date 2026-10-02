@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"sync"
@@ -82,6 +83,15 @@ const (
 	subBufferSize       = 256
 )
 
+var (
+	// ErrAlreadyConnected is returned when Connect is called while a socket is
+	// already active. One Client owns exactly one WebSocket connection.
+	ErrAlreadyConnected = errors.New("kucoin: classic ws: already connected")
+	// ErrReconnecting is returned when a caller tries to manually connect while
+	// this Client is restoring an interrupted connection.
+	ErrReconnecting = errors.New("kucoin: classic ws: reconnect in progress")
+)
+
 type subscription struct {
 	topic          string
 	privateChannel bool
@@ -107,6 +117,8 @@ type Client struct {
 	subscriptions map[string]*subscription
 	ackWaiters    map[string]chan struct{}
 	closed        bool
+	reconnecting  bool
+	shutdown      chan struct{}
 	done          chan struct{}
 	welcomed      chan struct{}
 }
@@ -125,6 +137,7 @@ func NewClient(endpoint, token string, opts ...Option) *Client {
 		autoReconnect: true,
 		subscriptions: make(map[string]*subscription),
 		ackWaiters:    make(map[string]chan struct{}),
+		shutdown:      make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -141,34 +154,72 @@ func randomID() string {
 // Connect dials the endpoint and blocks until KuCoin's welcome message
 // arrives (or ctx is done / a timeout elapses).
 func (c *Client) Connect(ctx context.Context) error {
+	return c.connect(ctx, false)
+}
+
+func (c *Client) connect(ctx context.Context, reconnect bool) error {
 	c.mu.Lock()
-	c.closed = false
+	if reconnect {
+		if c.closed {
+			c.mu.Unlock()
+			return context.Canceled
+		}
+	} else {
+		if c.conn != nil {
+			c.mu.Unlock()
+			return ErrAlreadyConnected
+		}
+		if c.reconnecting {
+			c.mu.Unlock()
+			return ErrReconnecting
+		}
+		if c.closed {
+			c.closed = false
+			c.shutdown = make(chan struct{})
+		}
+	}
 	c.done = make(chan struct{})
 	c.welcomed = make(chan struct{})
+	done := c.done
+	welcomed := c.welcomed
 	c.mu.Unlock()
 
-	if err := c.dial(ctx); err != nil {
+	conn, err := c.dial(ctx)
+	if err != nil {
+		c.discardConnection(nil, done)
 		return err
 	}
 
-	go c.readPump()
-	go c.pingPump()
+	c.mu.Lock()
+	if c.closed || c.done != done {
+		c.mu.Unlock()
+		_ = conn.Close()
+		return context.Canceled
+	}
+	c.conn = conn
+	c.mu.Unlock()
+
+	_ = conn.SetReadDeadline(time.Now().Add(c.pingInterval + c.pingTimeout))
+	go c.readPump(conn, done)
+	go c.pingPump(conn, done)
 
 	select {
-	case <-c.welcomed:
+	case <-welcomed:
 		c.logger.Info("kucoin: classic ws connected")
 		return nil
 	case <-time.After(subscribeAckTimeout):
+		c.disconnect(conn, done)
 		return fmt.Errorf("kucoin: classic ws: timed out waiting for welcome message")
 	case <-ctx.Done():
+		c.disconnect(conn, done)
 		return ctx.Err()
 	}
 }
 
-func (c *Client) dial(ctx context.Context) error {
+func (c *Client) dial(ctx context.Context) (*websocket.Conn, error) {
 	endpoint, err := url.Parse(c.endpoint)
 	if err != nil {
-		return fmt.Errorf("kucoin: classic ws: parse endpoint: %w", err)
+		return nil, fmt.Errorf("kucoin: classic ws: parse endpoint: %w", err)
 	}
 	query := endpoint.Query()
 	query.Set("token", c.token)
@@ -177,13 +228,9 @@ func (c *Client) dial(ctx context.Context) error {
 
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, endpoint.String(), nil)
 	if err != nil {
-		return fmt.Errorf("kucoin: classic ws dial: %w", err)
+		return nil, fmt.Errorf("kucoin: classic ws dial: %w", err)
 	}
-	_ = conn.SetReadDeadline(time.Now().Add(c.pingInterval + c.pingTimeout))
-	c.mu.Lock()
-	c.conn = conn
-	c.mu.Unlock()
-	return nil
+	return conn, nil
 }
 
 // Subscribe subscribes to a topic (e.g. "/market/ticker:BTC-USDT") and
@@ -202,6 +249,15 @@ func (c *Client) Subscribe(ctx context.Context, topic string, privateChannel boo
 	ack := make(chan struct{})
 	c.ackWaiters[id] = ack
 	c.mu.Unlock()
+	cleanup := func() {
+		c.mu.Lock()
+		delete(c.ackWaiters, id)
+		if !exists && c.subscriptions[key] == sub {
+			delete(c.subscriptions, key)
+			close(sub.ch)
+		}
+		c.mu.Unlock()
+	}
 
 	req := map[string]any{
 		"id":             id,
@@ -211,6 +267,7 @@ func (c *Client) Subscribe(ctx context.Context, topic string, privateChannel boo
 		"response":       true,
 	}
 	if err := c.writeJSON(req); err != nil {
+		cleanup()
 		return nil, err
 	}
 
@@ -218,8 +275,10 @@ func (c *Client) Subscribe(ctx context.Context, topic string, privateChannel boo
 	case <-ack:
 		return sub.ch, nil
 	case <-time.After(subscribeAckTimeout):
+		cleanup()
 		return nil, fmt.Errorf("kucoin: classic ws: subscribe to %q timed out waiting for ack", topic)
 	case <-ctx.Done():
+		cleanup()
 		return nil, ctx.Err()
 	}
 }
@@ -258,10 +317,19 @@ func (c *Client) Close() error {
 	c.closed = true
 	conn := c.conn
 	done := c.done
+	shutdown := c.shutdown
+	c.conn = nil
+	c.done = nil
+	c.welcomed = nil
+	subscriptions := c.subscriptions
+	c.subscriptions = make(map[string]*subscription)
+	c.ackWaiters = make(map[string]chan struct{})
+	closeSignal(done)
+	closeSignal(shutdown)
 	c.mu.Unlock()
 
-	if done != nil {
-		close(done)
+	for _, sub := range subscriptions {
+		close(sub.ch)
 	}
 	if conn != nil {
 		return conn.Close()
@@ -270,55 +338,106 @@ func (c *Client) Close() error {
 }
 
 func (c *Client) writeJSON(v any) error {
+	c.mu.RLock()
+	conn := c.conn
+	c.mu.RUnlock()
+	return c.writeJSONTo(conn, v)
+}
+
+func (c *Client) writeJSONTo(conn *websocket.Conn, v any) error {
+	if conn == nil {
+		return fmt.Errorf("kucoin: classic ws: not connected")
+	}
 	// gorilla/websocket permits only one concurrent writer per connection.
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 
 	c.mu.RLock()
-	conn := c.conn
+	current := c.conn
+	closed := c.closed
 	c.mu.RUnlock()
-	if conn == nil {
+	if closed || current != conn {
 		return fmt.Errorf("kucoin: classic ws: not connected")
 	}
 	return conn.WriteJSON(v)
 }
 
-func (c *Client) pingPump() {
+func (c *Client) pingPump(conn *websocket.Conn, done <-chan struct{}) {
 	ticker := time.NewTicker(c.pingInterval)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-c.done:
+		case <-done:
 			return
 		case <-ticker.C:
-			if err := c.writeJSON(map[string]string{"id": randomID(), "type": "ping"}); err != nil {
+			if err := c.writeJSONTo(conn, map[string]string{"id": randomID(), "type": "ping"}); err != nil {
 				c.logger.Warn("kucoin: classic ws ping failed", "error", err)
 			}
 		}
 	}
 }
 
-func (c *Client) readPump() {
+func (c *Client) readPump(conn *websocket.Conn, done chan struct{}) {
 	for {
-		c.mu.RLock()
-		conn := c.conn
-		closed := c.closed
-		c.mu.RUnlock()
-		if closed || conn == nil {
+		select {
+		case <-done:
 			return
+		default:
 		}
 
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
 			c.logger.Warn("kucoin: classic ws read error", "error", err)
-			if c.autoReconnect && !c.isClosed() {
-				go c.reconnectLoop()
+			if c.disconnect(conn, done) && c.autoReconnect {
+				c.startReconnect()
 			}
 			return
 		}
 		_ = conn.SetReadDeadline(time.Now().Add(c.pingInterval + c.pingTimeout))
 
-		c.handleMessage(raw)
+		c.handleMessageForConnection(conn, done, raw)
+	}
+}
+
+func closeSignal(ch chan struct{}) {
+	if ch == nil {
+		return
+	}
+	select {
+	case <-ch:
+	default:
+		close(ch)
+	}
+}
+
+// disconnect removes a specific connection only if it is still the active
+// generation. This prevents a stale reader from tearing down a newer socket.
+func (c *Client) disconnect(conn *websocket.Conn, done chan struct{}) bool {
+	c.mu.Lock()
+	active := c.conn == conn && c.done == done
+	if active {
+		c.conn = nil
+		closeSignal(done)
+	}
+	closed := c.closed
+	c.mu.Unlock()
+	_ = conn.Close()
+	return active && !closed
+}
+
+func (c *Client) discardConnection(conn *websocket.Conn, done chan struct{}) {
+	c.mu.Lock()
+	if c.done == done {
+		if c.conn == conn {
+			c.conn = nil
+		}
+		c.done = nil
+		c.welcomed = nil
+		closeSignal(done)
+	}
+	c.mu.Unlock()
+	if conn != nil {
+		_ = conn.Close()
 	}
 }
 
@@ -328,7 +447,35 @@ func (c *Client) isClosed() bool {
 	return c.closed
 }
 
+func (c *Client) startReconnect() {
+	c.mu.Lock()
+	if c.closed || c.reconnecting {
+		c.mu.Unlock()
+		return
+	}
+	c.reconnecting = true
+	c.mu.Unlock()
+	go c.reconnectLoop()
+}
+
 func (c *Client) handleMessage(raw []byte) {
+	c.handleMessageForConnection(nil, nil, raw)
+}
+
+// handleMessageForConnection rejects frames from a superseded socket before
+// they can acknowledge a subscription, complete a new welcome handshake, or
+// reach a current subscriber. The nil form keeps the package-level decoder
+// testable without a network connection.
+func (c *Client) handleMessageForConnection(conn *websocket.Conn, done chan struct{}, raw []byte) {
+	if conn != nil {
+		c.mu.RLock()
+		active := c.conn == conn && c.done == done
+		c.mu.RUnlock()
+		if !active {
+			return
+		}
+	}
+
 	var envelope struct {
 		ID   string `json:"id"`
 		Type string `json:"type"`
@@ -386,17 +533,40 @@ func (c *Client) handleMessage(raw []byte) {
 }
 
 func (c *Client) reconnectLoop() {
+	c.mu.RLock()
+	shutdown := c.shutdown
+	c.mu.RUnlock()
+	defer func() {
+		c.mu.Lock()
+		c.reconnecting = false
+		c.mu.Unlock()
+	}()
+
 	backoff := reconnectMin
 	for {
 		if c.isClosed() {
 			return
 		}
-		time.Sleep(backoff)
+		timer := time.NewTimer(backoff)
+		select {
+		case <-shutdown:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return
+		case <-timer.C:
+		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), subscribeAckTimeout)
-		err := c.Connect(ctx)
+		err := c.connect(ctx, true)
 		cancel()
 		if err != nil {
+			if c.isClosed() {
+				return
+			}
 			c.logger.Warn("kucoin: classic ws reconnect failed", "error", err, "backoff", backoff)
 			backoff *= 2
 			if backoff > reconnectMax {

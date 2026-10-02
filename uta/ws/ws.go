@@ -1,10 +1,7 @@
-// Package ws implements KuCoin UTA's WebSocket token-acquisition
-// endpoint. This is a REST call — the actual socket connection is built
-// with websocket/uta.NewClient using the token returned here.
-//
-// The UTA WebSocket API is explicitly documented by KuCoin as
-// pre-release/beta ("DO NOT use this API in production environments or
-// live trading under any circumstances"), unlike Classic's WebSocket API.
+// Package ws preserves the legacy UTA WebSocket token-acquisition endpoint.
+// This REST endpoint is listed under KuCoin's abandoned UTA API section.
+// Current UTA WebSocket v2 private channels authenticate after welcome with
+// websocket/uta.WithCredentials rather than a bullet token.
 //
 // Docs: https://www.kucoin.com/docs-new/websocket-api/base-info/get-private-token-uta
 package ws
@@ -16,15 +13,13 @@ import (
 	"github.com/tigusigalpa/kucoin-go/transport"
 )
 
-// Token carries the bullet token needed to open a private UTA WebSocket
-// connection. Unlike Classic's token response, this has no
-// instanceServers list — UTA's WebSocket hosts are fixed, documented
-// constants (see the websocket/uta package).
+// Token carries the legacy UTA bullet token. New UTA v2 integrations should
+// use websocket/uta.WithCredentials instead.
 type Token struct {
 	Token string `json:"token"`
 }
 
-// Client fetches UTA WebSocket connection tokens.
+// Client fetches legacy UTA WebSocket connection tokens.
 type Client struct {
 	executor *transport.Executor
 }
@@ -35,8 +30,8 @@ func NewClient(executor *transport.Executor) *Client {
 	return &Client{executor: executor}
 }
 
-// GetPrivateToken returns a token for opening a private UTA WebSocket
-// connection (order/balance/position channels).
+// GetPrivateToken returns a legacy private UTA WebSocket token. Prefer the
+// current signed UTA v2 WebSocket authentication flow for new integrations.
 //
 // Docs: https://www.kucoin.com/docs-new/websocket-api/base-info/get-private-token-uta
 func (c *Client) GetPrivateToken(ctx context.Context) (*Token, error) {

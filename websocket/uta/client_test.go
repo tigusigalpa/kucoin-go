@@ -2,6 +2,7 @@ package uta
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/tigusigalpa/kucoin-go/transport"
 )
 
 var upgrader = websocket.Upgrader{
@@ -42,6 +44,84 @@ func wsURL(httpURL string) string {
 	return "ws" + strings.TrimPrefix(httpURL, "http")
 }
 
+func TestClient_ConnectAuthenticatesWithCredentials(t *testing.T) {
+	authenticated := make(chan map[string]any, 1)
+	server := fakeServer(t, func(conn *websocket.Conn) {
+		var request map[string]any
+		if err := conn.ReadJSON(&request); err != nil {
+			return
+		}
+		if request["op"] != "auth" {
+			t.Errorf("op = %v, want auth", request["op"])
+			return
+		}
+		if request["kc-api-key"] != "test-key" || request["kc-api-sign"] == "" || request["kc-api-passphrase"] == "" || request["kc-api-timestamp"] == "" {
+			t.Errorf("incomplete auth request: %#v", request)
+			return
+		}
+		authenticated <- request
+		_ = conn.WriteJSON(map[string]any{"id": request["id"], "result": true})
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	})
+	defer server.Close()
+
+	client := NewClient(wsURL(server.URL), "", WithAutoReconnect(false), WithCredentials(transport.Credentials{
+		APIKey:        "test-key",
+		APISecret:     "test-secret",
+		APIPassphrase: "test-passphrase",
+	}))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer client.Close()
+	select {
+	case <-authenticated:
+	case <-time.After(time.Second):
+		t.Fatal("server did not receive auth request")
+	}
+}
+
+func TestClient_ConnectReportsAuthenticationFailure(t *testing.T) {
+	server := fakeServer(t, func(conn *websocket.Conn) {
+		var request map[string]any
+		if err := conn.ReadJSON(&request); err == nil && request["op"] == "auth" {
+			_ = conn.WriteJSON(map[string]any{"id": request["id"], "result": false})
+		}
+	})
+	defer server.Close()
+
+	client := NewClient(wsURL(server.URL), "", WithAutoReconnect(false), WithCredentials(transport.Credentials{
+		APIKey:        "test-key",
+		APISecret:     "test-secret",
+		APIPassphrase: "test-passphrase",
+	}))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx); !errors.Is(err, ErrAuthenticationFailed) {
+		t.Fatalf("Connect error = %v, want ErrAuthenticationFailed", err)
+	}
+}
+
+func TestClient_ConnectRejectsIncompleteCredentials(t *testing.T) {
+	server := fakeServer(t, func(conn *websocket.Conn) {
+		_, _, _ = conn.ReadMessage()
+	})
+	defer server.Close()
+
+	client := NewClient(wsURL(server.URL), "", WithAutoReconnect(false), WithCredentials(transport.Credentials{APIKey: "test-key"}))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx); !errors.Is(err, ErrIncompleteCredentials) {
+		t.Fatalf("Connect error = %v, want ErrIncompleteCredentials", err)
+	}
+}
+
 func TestClient_ConnectSubscribePush(t *testing.T) {
 	server := fakeServer(t, func(conn *websocket.Conn) {
 		for {
@@ -58,8 +138,8 @@ func TestClient_ConnectSubscribePush(t *testing.T) {
 					"d": map[string]string{"price": "1.23"},
 				})
 			}
-			if msg["type"] == "ping" {
-				_ = conn.WriteJSON(map[string]any{"id": msg["id"], "type": "pong", "ts": 1})
+			if msg["op"] == "ping" {
+				_ = conn.WriteJSON(map[string]any{"id": msg["id"], "op": "pong", "ts": 1})
 			}
 		}
 	})
@@ -111,6 +191,18 @@ func TestClient_ConnectTimesOutWithoutWelcome(t *testing.T) {
 	if err := client.Connect(ctx); err == nil {
 		t.Fatal("expected Connect to fail without a welcome message")
 	}
+	client.mu.RLock()
+	conn := client.conn
+	done := client.done
+	client.mu.RUnlock()
+	if conn != nil {
+		t.Fatal("connection remained active after welcome timeout")
+	}
+	select {
+	case <-done:
+	default:
+		t.Fatal("connection worker was not stopped after welcome timeout")
+	}
 }
 
 func TestClient_Close(t *testing.T) {
@@ -135,6 +227,134 @@ func TestClient_Close(t *testing.T) {
 	}
 	if err := client.Close(); err != nil {
 		t.Fatalf("second Close should be a no-op, got: %v", err)
+	}
+}
+
+func TestClient_CloseClosesSubscriptionChannels(t *testing.T) {
+	server := fakeServer(t, func(conn *websocket.Conn) {
+		for {
+			var message map[string]any
+			if err := conn.ReadJSON(&message); err != nil {
+				return
+			}
+			if message["action"] == "subscribe" {
+				_ = conn.WriteJSON(map[string]any{"id": message["id"], "result": "true"})
+			}
+		}
+	})
+	defer server.Close()
+
+	client := NewClient(wsURL(server.URL), "", WithAutoReconnect(false))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	pushes, err := client.Subscribe("ticker", "SPOT", "BTC-USDT")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case _, ok := <-pushes:
+		if ok {
+			t.Fatal("subscription channel is still open after Close")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("subscription channel was not closed")
+	}
+}
+
+func TestClient_SubscribeTickerDeliversTypedPush(t *testing.T) {
+	server := fakeServer(t, func(conn *websocket.Conn) {
+		for {
+			var message map[string]any
+			if err := conn.ReadJSON(&message); err != nil {
+				return
+			}
+			if message["action"] == "subscribe" {
+				_ = conn.WriteJSON(map[string]any{"id": message["id"], "result": "true"})
+				_ = conn.WriteJSON(map[string]any{
+					"T": "ticker.SPOT",
+					"P": 1768206966101166007,
+					"d": map[string]any{
+						"s": "BTC-USDT", "a": "90968.2", "A": "0.97675941",
+						"b": "90968.1", "B": "0.02052839", "l": "90968.2",
+						"q": "0.00109929", "S": "BUY", "E": 25958853459,
+						"M": 1768206966096000000,
+					},
+				})
+			}
+		}
+	})
+	defer server.Close()
+
+	client := NewClient(wsURL(server.URL), "", WithAutoReconnect(false))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer client.Close()
+
+	tickers, err := client.SubscribeTicker("SPOT", "BTC-USDT")
+	if err != nil {
+		t.Fatalf("SubscribeTicker: %v", err)
+	}
+	select {
+	case ticker := <-tickers:
+		if ticker.TradeType != "SPOT" || ticker.Symbol != "BTC-USDT" || ticker.LastPrice != "90968.2" || ticker.GatewayTimestamp != 1768206966101166007 {
+			t.Fatalf("unexpected ticker: %+v", ticker)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for typed ticker")
+	}
+}
+
+func TestClient_ReconnectsAndResubscribes(t *testing.T) {
+	var connections int
+	var mu sync.Mutex
+	resubscribed := make(chan struct{})
+	var once sync.Once
+	server := fakeServer(t, func(conn *websocket.Conn) {
+		mu.Lock()
+		connections++
+		connection := connections
+		mu.Unlock()
+		for {
+			var message map[string]any
+			if err := conn.ReadJSON(&message); err != nil {
+				return
+			}
+			if message["action"] != "subscribe" {
+				continue
+			}
+			if connection == 1 {
+				_ = conn.WriteJSON(map[string]any{"id": message["id"], "result": "true"})
+				_ = conn.Close()
+				return
+			}
+			once.Do(func() { close(resubscribed) })
+		}
+	})
+	defer server.Close()
+
+	client := NewClient(wsURL(server.URL), "")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer client.Close()
+	if _, err := client.Subscribe("ticker", "SPOT", "BTC-USDT"); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	select {
+	case <-resubscribed:
+	case <-time.After(4 * time.Second):
+		t.Fatal("client did not resubscribe after an unexpected disconnect")
 	}
 }
 
@@ -228,11 +448,14 @@ func TestClient_HandlesControlMessagesAndResubscribeWithoutConnection(t *testing
 		t.Fatal("welcome did not unblock Connect")
 	}
 
-	ack := make(chan struct{})
+	ack := make(chan bool, 1)
 	client.ackWaiters["ack-1"] = ack
 	client.handleMessage([]byte(`{"id":"ack-1","result":"true"}`))
 	select {
-	case <-ack:
+	case ok := <-ack:
+		if !ok {
+			t.Fatal("ack result = false, want true")
+		}
 	default:
 		t.Fatal("ack waiter was not notified")
 	}
@@ -258,4 +481,41 @@ func TestClient_HandlesControlMessagesAndResubscribeWithoutConnection(t *testing
 	sub.ch <- Push{}
 	client.handleMessage([]byte(`{"T":"ticker.SPOT","d":{}}`))
 	client.resubscribeAll()
+}
+
+func TestClient_SubscribeReportsNegativeAcknowledgement(t *testing.T) {
+	server := fakeServer(t, func(conn *websocket.Conn) {
+		var message map[string]any
+		if err := conn.ReadJSON(&message); err == nil && message["action"] == "subscribe" {
+			_ = conn.WriteJSON(map[string]any{"id": message["id"], "result": false})
+		}
+	})
+	defer server.Close()
+
+	client := NewClient(wsURL(server.URL), "", WithAutoReconnect(false))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer client.Close()
+	if _, err := client.Subscribe("ticker", "SPOT", "BTC-USDT"); !errors.Is(err, ErrSubscriptionFailed) {
+		t.Fatalf("Subscribe error = %v, want ErrSubscriptionFailed", err)
+	}
+}
+
+func TestClient_IgnoresFramesFromSupersededConnection(t *testing.T) {
+	client := NewClient("ws://example.test", "")
+	active := &websocket.Conn{}
+	stale := &websocket.Conn{}
+	client.conn = active
+	client.done = make(chan struct{})
+	client.welcomed = make(chan struct{})
+
+	client.handleMessageForConnection(stale, make(chan struct{}), []byte(`{"message":"welcome"}`))
+	select {
+	case <-client.welcomed:
+		t.Fatal("a stale connection completed the active welcome handshake")
+	default:
+	}
 }

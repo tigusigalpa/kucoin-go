@@ -29,6 +29,7 @@ import (
 	"github.com/tigusigalpa/kucoin-go/uta/market"
 	"github.com/tigusigalpa/kucoin-go/uta/orders"
 	"github.com/tigusigalpa/kucoin-go/uta/positions"
+	utav2market "github.com/tigusigalpa/kucoin-go/uta/v2/market"
 	utaws "github.com/tigusigalpa/kucoin-go/uta/ws"
 )
 
@@ -186,10 +187,20 @@ type UTAServices struct {
 	Orders    *orders.Client
 	Positions *positions.Client
 	Leverage  *leverage.Client
-	// Ws fetches the private WebSocket bullet-token
-	// (POST /api/v2/bullet-private). It does not open a socket itself —
-	// pass the returned token to websocket/uta.NewClient.
+	// Ws fetches a legacy private WebSocket bullet-token. The current UTA v2
+	// WebSocket flow uses websocket/uta.WithCredentials after welcome; this
+	// service remains available only for source compatibility.
 	Ws *utaws.Client
+	// V2 contains current UTA REST v2 services. Existing UTA v1 services
+	// remain in place for source compatibility; do not mix v1 and v2 data
+	// models in one workflow without consulting KuCoin's migration notes.
+	V2 UTAV2Services
+}
+
+// UTAV2Services groups current UTA REST v2 services. It is intentionally
+// nested below UTA so Classic and UTA account semantics remain explicit.
+type UTAV2Services struct {
+	Market *utav2market.Client
 }
 
 // SpotServices groups Classic Spot's implemented services.
@@ -307,6 +318,9 @@ func NewClient(opts ...Option) *Client {
 			Positions: positions.NewClient(utaExecutor),
 			Leverage:  leverage.NewClient(utaExecutor),
 			Ws:        utaws.NewClient(utaExecutor),
+			V2: UTAV2Services{
+				Market: utav2market.NewClient(utaExecutor),
+			},
 		},
 		Classic: ClassicServices{
 			Spot: SpotServices{

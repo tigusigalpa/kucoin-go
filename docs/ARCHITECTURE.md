@@ -8,23 +8,29 @@ kucoin-go/                  root package: ClientConfig, Option, Client (UTA/Clas
 ├── transport/              Executor (signed/public HTTP), ResponseMeta, error hierarchy
 │                           owns Credentials/Clock/Logger/RetryPolicy — root package re-exports
 │                           them as type aliases so callers only import "kucoin"
-├── uta/market/              public market data — depends only on transport.Executor
-├── uta/account/             private account endpoints — same pattern
-├── uta/orders/              private order-management endpoints — same pattern
-├── uta/positions/           private position-management endpoints — same pattern
-├── uta/leverage/            private leverage endpoints — split out because all
+├── uta/market/              retained UTA v1 market compatibility service
+├── uta/account/             retained UTA v1 private-account compatibility service
+├── uta/orders/              retained UTA v1 order-management compatibility service
+├── uta/positions/           retained UTA v1 position-management compatibility service
+├── uta/leverage/            retained UTA v1 leverage compatibility service — split out because all
 │                            three require the "Unified" permission, unlike most
 │                            read endpoints elsewhere, which need only "General"
+├── uta/v2/market/           current UTA v2 Market Data (all 23 documented methods)
+├── websocket/classic/       Classic protocol lifecycle and raw message routing
+├── websocket/uta/           UTA v2 lifecycle, post-welcome auth and typed ticker routing
 ├── internal/endpoints.yaml  manifest: one row per implemented method
 └── internal/gendocs/        generates docs/ENDPOINTS.md from the manifest
 ```
 
-Every `uta/*` service package follows the identical shape: a `Client` struct
+Every REST `uta/*` service package follows the identical shape: a `Client` struct
 wrapping `*transport.Executor`, a `NewClient(executor)` constructor, and one
 method per endpoint. None of them import each other — they're peers under
 `uta/`, wired together only in the root `config.go`'s `UTAServices` struct.
 This keeps each service independently testable and means adding a new
-domain (e.g. a future `uta/transfers`) never risks an import cycle.
+domain (e.g. a future `uta/v2/transfers`) never risks an import cycle. Current
+UTA v2 services are nested at `Client.UTA.V2`; retained v1 services remain at
+`Client.UTA.*` solely for source compatibility. Their types are deliberately
+not merged because KuCoin has moved those endpoints to its abandoned section.
 
 ## Local, no-network validation
 
@@ -56,6 +62,8 @@ only ever depend on `transport`, never on each other or on root.
 1. Caller invokes a typed service method (e.g. `market.Client.GetTicker`).
 2. The service builds a `map[string]string` query (GET) or a typed request
    struct (POST body) and calls `Executor.DoPublic` or `Executor.Do`.
+   Endpoints requiring repeated query keys use `Executor.DoPublicValues` so
+   the exact `url.Values` representation survives onto the wire.
 3. `Executor.Do` returns `ErrCredentialsRequired` **locally, with no
    network call**, if no credentials are configured.
 4. The query string is built once via `url.Values.Encode()` (which sorts
@@ -84,7 +92,7 @@ only ever depend on `transport`, never on each other or on root.
 
 `internal/endpoints.yaml` is the single source of truth for endpoint
 coverage. `internal/gendocs` renders it to `docs/ENDPOINTS.md`. CI
-(`.github/workflows/test.yml`, job `docs-drift`) regenerates the file and
+(`.github/workflows/ci.yml`, job `docs`) regenerates the file and
 fails the build if it differs from what's committed — so the coverage
 table can never silently drift from the manifest, and the manifest can
 never silently drift from what's actually implemented (every method in
@@ -95,10 +103,26 @@ domains exist).
 
 ## What's deliberately not abstracted away
 
-- **UTA vs Classic** are separate service roots (`Client.UTA`, future
+- **UTA vs Classic** are separate service roots (`Client.UTA`,
   `Client.Classic`), not a merged type — see the root README's "UTA
   versus Classic" section.
 - **No generic `Request(method, path, data)` escape hatch** is exposed
   publicly yet; every implemented endpoint has a typed method. If a raw
   escape hatch is added later, it will be under an `Advanced` name and
   documented as outside typed-compatibility guarantees.
+
+## WebSocket lifecycle
+
+Classic and UTA sockets have intentionally separate clients because their
+authentication and envelopes differ. Each client serializes writes, gives a
+reader and pinger a specific connection generation, ignores late frames from
+a previous generation, stops backoff waits on `Close`, and re-sends retained
+subscriptions after reconnect. This keeps a stale connection from completing
+a fresh handshake or injecting a push into a current stream.
+
+The UTA v2 client signs a post-welcome private-channel authentication frame
+when constructed with `websocket/uta.WithCredentials`. Generic UTA and
+Classic subscriptions remain available for all documented channel names, but
+only UTA ticker has a typed stream today. The raw routes are deliberately
+marked partial in [API_COVERAGE.md](API_COVERAGE.md), rather than presenting
+untyped JSON as a complete SDK channel surface.
