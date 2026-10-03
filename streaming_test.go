@@ -237,7 +237,11 @@ func TestClassicFuturesStream_PrivateSessionSignsTheTokenRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DialPrivate: %v", err)
 	}
-	defer session.Close()
+	defer func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("close session: %v", err)
+		}
+	}()
 
 	reqs := f.requestsTo(http.MethodPost, "/api/v1/bullet-private")
 	if len(reqs) != 1 {
@@ -268,7 +272,11 @@ func TestClassicFuturesStream_PrivateChannelOnAPublicSessionIsRejectedLocally(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close()
+	defer func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("close session: %v", err)
+		}
+	}()
 	_, err = session.SubscribeBalance(testCtx(t))
 	if !errors.Is(err, futuresstreaming.ErrPrivateConnectionRequired) {
 		t.Fatalf("SubscribeBalance on a public session = %v", err)
@@ -320,7 +328,11 @@ func TestClassicFuturesStream_ManagedOrderBookUsesTheRESTSnapshot(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close()
+	defer func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("close session: %v", err)
+		}
+	}()
 	book, err := session.SubscribeOrderBook(testCtx(t), "XBTUSDTM")
 	if err != nil {
 		t.Fatalf("SubscribeOrderBook: %v", err)
