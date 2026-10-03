@@ -143,7 +143,11 @@ func TestClassicFuturesStream_PublicSessionEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DialPublic: %v", err)
 	}
-	defer session.Close()
+	defer func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("close session: %v", err)
+		}
+	}()
 	ticks, err := session.SubscribeTickerV2(testCtx(t), []string{"XBTUSDTM"})
 	if err != nil {
 		t.Fatalf("SubscribeTickerV2: %v", err)
@@ -182,7 +186,11 @@ func TestClassicFuturesStream_EveryReconnectFetchesAFreshToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close()
+	defer func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("close session: %v", err)
+		}
+	}()
 	ticks, err := session.SubscribeTickerV2(testCtx(t), []string{"XBTUSDTM"})
 	if err != nil {
 		t.Fatal(err)
