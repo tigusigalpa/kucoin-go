@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
+
+	"github.com/tigusigalpa/kucoin-go/stream"
 )
 
 // Ticker is a typed UTA WebSocket ticker update. Numeric exchange values are
 // retained as strings to avoid precision loss. GatewayTimestamp is the P
 // envelope field; MatchingEngineTime is the M payload field.
+//
+// It is kept for source compatibility. The uta/v2/streaming package offers a
+// richer ticker type with exact-decimal fields.
 //
 // Docs: https://www.kucoin.com/docs-new/3470355w0
 type Ticker struct {
@@ -28,95 +32,44 @@ type Ticker struct {
 	MatchingEngineTime int64  `json:"M"`
 }
 
-// DecodeTicker decodes a ticker.SPOT or ticker.FUTURES Push. It is useful
-// when an application deliberately uses Subscribe's raw channel for generic
+// DecodeTicker decodes a ticker.SPOT or ticker.FUTURES Push. It is useful when
+// an application deliberately uses Subscribe's raw channel for generic
 // dispatch; ordinary users should prefer SubscribeTicker.
 func DecodeTicker(push Push) (Ticker, error) {
 	const prefix = "ticker."
-	if !strings.HasPrefix(push.T, prefix) {
+	if !strings.HasPrefix(strings.ToLower(push.T), prefix) {
 		return Ticker{}, fmt.Errorf("kucoin: uta ws: expected %s push, got %q", prefix, push.T)
 	}
 	var ticker Ticker
 	if err := json.Unmarshal(push.Data, &ticker); err != nil {
 		return Ticker{}, fmt.Errorf("kucoin: uta ws: decode ticker payload: %w", err)
 	}
-	ticker.TradeType = strings.TrimPrefix(push.T, prefix)
+	ticker.TradeType = push.T[len(prefix):]
 	ticker.GatewayTimestamp = push.P
 	return ticker, nil
 }
 
-// SubscribeTicker subscribes to the documented ticker channel and delivers
-// typed updates; callers never need to decode JSON manually. The subscription
-// remains active until Unsubscribe("ticker", tradeType, symbol) or Close.
+// SubscribeTicker subscribes to the documented ticker channel and delivers typed
+// updates; callers never need to decode JSON manually. Only updates for symbol
+// are delivered. The subscription remains active until
+// Unsubscribe("ticker", tradeType, symbol) or Close.
 //
-// A Client has one logical subscription per channel/tradeType/symbol tuple.
-// Do not mix SubscribeTicker and Subscribe for the same tuple unless both raw
-// and typed streams are intentionally consumed.
+// Subscribing the same ticker twice returns the existing channel, also when
+// several goroutines do it at the same time. For exact-decimal fields and
+// multi-symbol subscriptions use uta/v2/streaming.
 func (c *Client) SubscribeTicker(tradeType, symbol string) (<-chan Ticker, error) {
-	key := "ticker:" + tradeType + ":" + symbol
-	c.mu.Lock()
-	sub, exists := c.subscriptions[key]
-	if exists {
-		if sub.tickerCh == nil {
-			sub.tickerCh = make(chan Ticker, subBufferSize)
-		}
-		tickers := sub.tickerCh
-		c.mu.Unlock()
-		return tickers, nil
-	}
-	sub = &subscription{
-		channel:   "ticker",
-		tradeType: tradeType,
-		symbol:    symbol,
-		ch:        make(chan Push, subBufferSize),
-	}
-	c.subscriptions[key] = sub
-	sub.tickerCh = make(chan Ticker, subBufferSize)
-	tickers := sub.tickerCh
-	id := randomID()
-	ack := make(chan bool, 1)
-	c.ackWaiters[id] = ack
-	done := c.done
-	c.mu.Unlock()
-	cleanup := func() {
-		c.mu.Lock()
-		if c.ackWaiters[id] == ack {
-			delete(c.ackWaiters, id)
-		}
-		if c.subscriptions[key] == sub {
-			delete(c.subscriptions, key)
-			close(sub.ch)
-			close(sub.tickerCh)
-		}
-		c.mu.Unlock()
-	}
-
-	req := map[string]any{
-		"id":        id,
-		"action":    "subscribe",
-		"channel":   "ticker",
-		"tradeType": tradeType,
-	}
+	spec := SubscribeSpec{Channel: "ticker", TradeType: tradeType}
 	if symbol != "" {
-		req["symbol"] = symbol
+		spec.Symbols = []string{symbol}
 	}
-	if err := c.writeJSON(req); err != nil {
-		cleanup()
+	sub, err := c.ticker.Get(context.Background(), spec.Name(), func() (*stream.Subscription[Ticker], error) {
+		return SubscribeTyped(context.Background(), c, spec, func(p *Push) (Ticker, bool, error) {
+			t, err := DecodeTicker(*p)
+			return t, err == nil, err
+		})
+	})
+	if err != nil {
 		return nil, err
 	}
-
-	select {
-	case ok := <-ack:
-		if !ok {
-			cleanup()
-			return nil, ErrSubscriptionFailed
-		}
-		return tickers, nil
-	case <-time.After(welcomeWaitTimeout):
-		cleanup()
-		return nil, fmt.Errorf("kucoin: uta ws: subscribe to ticker timed out waiting for acknowledgement")
-	case <-done:
-		cleanup()
-		return nil, context.Canceled
-	}
+	return sub.C(), nil
 }

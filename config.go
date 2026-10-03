@@ -14,15 +14,20 @@ import (
 	"net/http"
 	"time"
 
+	classicfuturesmarket "github.com/tigusigalpa/kucoin-go/classic/futures/market"
 	classicfuturesorders "github.com/tigusigalpa/kucoin-go/classic/futures/orders"
 	classicfuturespositions "github.com/tigusigalpa/kucoin-go/classic/futures/positions"
+	classicfuturesstreaming "github.com/tigusigalpa/kucoin-go/classic/futures/streaming"
 	classicfuturesws "github.com/tigusigalpa/kucoin-go/classic/futures/ws"
 	classicmargindebit "github.com/tigusigalpa/kucoin-go/classic/margin/debit"
 	classicmarginmarket "github.com/tigusigalpa/kucoin-go/classic/margin/market"
 	classicmarginorders "github.com/tigusigalpa/kucoin-go/classic/margin/orders"
+	classicmarginstreaming "github.com/tigusigalpa/kucoin-go/classic/margin/streaming"
 	classicspotmarket "github.com/tigusigalpa/kucoin-go/classic/spot/market"
 	classicspotorders "github.com/tigusigalpa/kucoin-go/classic/spot/orders"
+	classicspotstreaming "github.com/tigusigalpa/kucoin-go/classic/spot/streaming"
 	classicspotws "github.com/tigusigalpa/kucoin-go/classic/spot/ws"
+	"github.com/tigusigalpa/kucoin-go/stream"
 	"github.com/tigusigalpa/kucoin-go/transport"
 	"github.com/tigusigalpa/kucoin-go/uta/account"
 	"github.com/tigusigalpa/kucoin-go/uta/leverage"
@@ -30,6 +35,7 @@ import (
 	"github.com/tigusigalpa/kucoin-go/uta/orders"
 	"github.com/tigusigalpa/kucoin-go/uta/positions"
 	utav2market "github.com/tigusigalpa/kucoin-go/uta/v2/market"
+	utav2streaming "github.com/tigusigalpa/kucoin-go/uta/v2/streaming"
 	utaws "github.com/tigusigalpa/kucoin-go/uta/ws"
 )
 
@@ -93,6 +99,18 @@ type ClientConfig struct {
 	Logger Logger
 
 	RetryPolicy *RetryPolicy
+
+	// StreamOptions are the default connection options of every WebSocket
+	// session dialled from the client (reconnect policy, buffer sizes,
+	// lifecycle-event handler, ...). Options passed to an individual Dial call
+	// are applied after them.
+	StreamOptions []stream.Option
+
+	// UTAWebSocketHosts overrides the WebSocket endpoints of the UTA v2 streaming
+	// service (a proxy, a test server). An empty field keeps KuCoin's documented
+	// host. Classic services need no override: their endpoint comes from the
+	// connection token that the REST host (see ClassicBaseURL) returns.
+	UTAWebSocketHosts utav2streaming.Hosts
 }
 
 // Option configures a ClientConfig at construction time.
@@ -157,6 +175,22 @@ func WithRetryPolicy(policy *RetryPolicy) Option {
 	return func(c *ClientConfig) { c.RetryPolicy = policy }
 }
 
+// WithStreamOptions sets default connection options for every WebSocket
+// session the client dials: the reconnect policy, subscription buffer size and
+// overflow policy, heartbeat overrides, a lifecycle-event handler and so on. The
+// client's Logger is used for stream diagnostics unless stream.WithLogger is
+// among the options. Options given to an individual Dial call override these.
+func WithStreamOptions(opts ...stream.Option) Option {
+	return func(c *ClientConfig) { c.StreamOptions = append(c.StreamOptions, opts...) }
+}
+
+// WithUTAWebSocketHosts overrides the WebSocket endpoints the UTA v2 streaming
+// service dials (see utav2streaming.Hosts); empty fields keep KuCoin's documented
+// hosts. Use it to reach KuCoin through a proxy or to point tests at a fake server.
+func WithUTAWebSocketHosts(hosts utav2streaming.Hosts) Option {
+	return func(c *ClientConfig) { c.UTAWebSocketHosts = hosts }
+}
+
 func newConfig(opts ...Option) *ClientConfig {
 	cfg := &ClientConfig{
 		UTABaseURL:            DefaultUTABaseURL,
@@ -201,6 +235,10 @@ type UTAServices struct {
 // nested below UTA so Classic and UTA account semantics remain explicit.
 type UTAV2Services struct {
 	Market *utav2market.Client
+	// Stream opens typed UTA WebSocket v2 sessions (DialFutures, DialSpot,
+	// DialPrivate) with every channel of the current documentation and a managed
+	// local order book. See docs/STREAMING.md.
+	Stream *utav2streaming.Service
 }
 
 // SpotServices groups Classic Spot's implemented services.
@@ -211,24 +249,35 @@ type SpotServices struct {
 	Orders *classicspotorders.Client
 	// Ws fetches public/private WebSocket bullet-tokens
 	// (POST /api/v1/bullet-public, /api/v1/bullet-private). It does not
-	// open a socket itself — pass the returned token/instanceServers to
-	// websocket/classic.NewClient.
+	// open a socket itself; Stream does, and fetches the tokens for you.
 	Ws *classicspotws.Client
+	// Stream opens typed WebSocket sessions (DialPublic, DialPrivate) with every
+	// Classic Spot channel and a managed local order book (which needs API
+	// credentials for its REST snapshot). See docs/STREAMING.md.
+	Stream *classicspotstreaming.Service
 }
 
-// FuturesServices groups Classic Futures' implemented services (a seed
-// set — Phase 1 scope, not the full Futures API; see
-// docs/ENDPOINTS.md for exactly what's covered).
+// FuturesServices groups Classic Futures' implemented services: the complete
+// public market-data REST group, the seed orders/positions services, the
+// WebSocket token calls and the typed WebSocket streaming service. See
+// docs/ENDPOINTS.md and docs/CHANNELS.md for exactly what is covered.
 //
 // Docs: https://www.kucoin.com/docs-new/rest/futures-trading/introduction
 type FuturesServices struct {
+	// Market is the public market-data REST group: contracts, tickers, order
+	// books, trades, klines, mark/index prices, funding rates and service
+	// status.
+	Market    *classicfuturesmarket.Client
 	Orders    *classicfuturesorders.Client
 	Positions *classicfuturespositions.Client
 	// Ws fetches public/private WebSocket bullet-tokens
 	// (POST /api/v1/bullet-public, /api/v1/bullet-private). It does not
-	// open a socket itself — pass the returned token/instanceServers to
-	// websocket/classic.NewClient.
+	// open a socket itself; Stream does, and fetches the tokens for you.
 	Ws *classicfuturesws.Client
+	// Stream opens typed WebSocket sessions (DialPublic, DialPrivate) with
+	// every Classic Futures channel and a managed local order book. See
+	// docs/STREAMING.md.
+	Stream *classicfuturesstreaming.Service
 }
 
 // MarginServices groups Classic Margin's implemented services (a seed
@@ -242,6 +291,10 @@ type MarginServices struct {
 	Market *classicmarginmarket.Client
 	Orders *classicmarginorders.Client
 	Debit  *classicmargindebit.Client
+	// Stream opens typed WebSocket sessions (DialPublic, DialPrivate) with every
+	// Classic Margin channel; its sessions also carry the Spot channels, which
+	// share the WebSocket host and tokens. See docs/STREAMING.md.
+	Stream *classicmarginstreaming.Service
 }
 
 // ClassicServices groups every implemented Classic (pre-UTA) account-mode
@@ -306,6 +359,14 @@ func NewClient(opts ...Option) *Client {
 		RetryPolicy: cfg.RetryPolicy,
 	})
 
+	streamOpts := append([]stream.Option{stream.WithLogger(cfg.Logger)}, cfg.StreamOptions...)
+	futuresMarket := classicfuturesmarket.NewClient(classicFuturesExecutor)
+	futuresWs := classicfuturesws.NewClient(classicFuturesExecutor)
+	spotMarket := classicspotmarket.NewClient(classicExecutor)
+	spotWs := classicspotws.NewClient(classicExecutor)
+	utaMarketV2 := utav2market.NewClient(utaExecutor)
+	utaCredentials := cfg.Credentials
+
 	return &Client{
 		cfg:                    cfg,
 		classicExecutor:        classicExecutor,
@@ -319,24 +380,34 @@ func NewClient(opts ...Option) *Client {
 			Leverage:  leverage.NewClient(utaExecutor),
 			Ws:        utaws.NewClient(utaExecutor),
 			V2: UTAV2Services{
-				Market: utav2market.NewClient(utaExecutor),
+				Market: utaMarketV2,
+				Stream: utav2streaming.NewService(cfg.UTAWebSocketHosts, &utaCredentials, utaBookSnapshot(utaMarketV2), streamOpts...).WithClock(cfg.Clock),
 			},
 		},
 		Classic: ClassicServices{
 			Spot: SpotServices{
-				Market: classicspotmarket.NewClient(classicExecutor),
+				Market: spotMarket,
 				Orders: classicspotorders.NewClient(classicExecutor),
-				Ws:     classicspotws.NewClient(classicExecutor),
+				Ws:     spotWs,
+				Stream: classicspotstreaming.NewService(spotWs.GetPublicToken, spotWs.GetPrivateToken, spotBookSnapshot(spotMarket), streamOpts...),
 			},
 			Futures: FuturesServices{
+				Market:    futuresMarket,
 				Orders:    classicfuturesorders.NewClient(classicFuturesExecutor),
 				Positions: classicfuturespositions.NewClient(classicFuturesExecutor),
-				Ws:        classicfuturesws.NewClient(classicFuturesExecutor),
+				Ws:        futuresWs,
+				Stream: classicfuturesstreaming.NewService(
+					futuresWs.GetPublicToken,
+					futuresWs.GetPrivateToken,
+					futuresBookSnapshot(futuresMarket),
+					streamOpts...,
+				),
 			},
 			Margin: MarginServices{
 				Market: classicmarginmarket.NewClient(classicExecutor),
 				Orders: classicmarginorders.NewClient(classicExecutor),
 				Debit:  classicmargindebit.NewClient(classicExecutor),
+				Stream: classicmarginstreaming.NewService(spotWs.GetPublicToken, spotWs.GetPrivateToken, spotBookSnapshot(spotMarket), streamOpts...),
 			},
 		},
 	}

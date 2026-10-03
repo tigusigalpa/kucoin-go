@@ -42,5 +42,5 @@ jobs:
           flags: unit
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
-      - name: Verify generated endpoint documentation
-        run: go run ./internal/gendocs && git diff --exit-code -- docs/ENDPOINTS.md
+      - name: Verify generated endpoint and channel documentation
+        run: go run ./internal/gendocs && git diff --exit-code -- docs/ENDPOINTS.md docs/CHANNELS.md

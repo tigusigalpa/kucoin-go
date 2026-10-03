@@ -86,7 +86,7 @@ type Config struct {
 // BorrowCoefficient is documented by KuCoin as "Abandoned" — present for
 // backward compatibility only, do not rely on it.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/risk-limit/margin-trading-pair-configuration
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/risk-limit/get-margin-risk-limit
 type RiskLimitCrossItem struct {
 	Timestamp         int64  `json:"timestamp"`
 	Currency          string `json:"currency"`
@@ -104,7 +104,7 @@ type RiskLimitCrossItem struct {
 // RiskLimitIsolatedItem is one symbol's isolated-margin risk limit,
 // broken out per base/quote leg.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/risk-limit/margin-trading-pair-configuration
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/risk-limit/get-margin-risk-limit
 type RiskLimitIsolatedItem struct {
 	Timestamp              int64  `json:"timestamp"`
 	Symbol                 string `json:"symbol"`

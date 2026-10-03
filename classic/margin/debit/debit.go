@@ -133,7 +133,7 @@ func (c *Client) GetInterestHistory(ctx context.Context, currency string, opts H
 // ModifyLeverage changes cross-account or per-symbol isolated leverage.
 // KuCoin returns an empty payload on success.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/debit/modify-leverage-multiplier
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/debit/modify-leverage
 func (c *Client) ModifyLeverage(ctx context.Context, req ModifyLeverageRequest) error {
 	_, err := c.executor.Do(ctx, http.MethodPost, "/api/v3/position/update-user-leverage", nil, req, nil)
 	return err

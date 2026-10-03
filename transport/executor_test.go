@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -392,5 +395,99 @@ func TestRetryPolicyDelayForAttemptHandlesDisabledBackoff(t *testing.T) {
 	}
 	if got := (&RetryPolicy{BaseDelay: time.Millisecond}).delayForAttempt(1); got != 0 {
 		t.Errorf("delay without a maximum delay = %v, want 0", got)
+	}
+}
+
+func TestDoOptional_SignsOnlyWhenCredentialsAreConfigured(t *testing.T) {
+	var gotHeaders http.Header
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		gotHeaders = r.Header.Clone()
+		_, _ = w.Write([]byte(`{"code":"200000","data":{"v":1}}`))
+	}
+	signed, _ := newTestExecutor(t, handler, Credentials{APIKey: "key", APISecret: "secret", APIPassphrase: "pass"})
+	var out struct{ V int }
+	if _, err := signed.DoOptional(context.Background(), http.MethodGet, "/api/v1/trade-statistics", nil, &out); err != nil {
+		t.Fatalf("DoOptional with credentials: %v", err)
+	}
+	if gotHeaders.Get("KC-API-KEY") != "key" || gotHeaders.Get("KC-API-SIGN") == "" || out.V != 1 {
+		t.Fatalf("the request must be signed when credentials exist: %v %+v", gotHeaders, out)
+	}
+
+	anonymous, _ := newTestExecutor(t, handler, Credentials{})
+	gotHeaders = nil
+	if _, err := anonymous.DoOptional(context.Background(), http.MethodGet, "/api/v1/trade-statistics", nil, nil); err != nil {
+		t.Fatalf("DoOptional without credentials must not fail locally: %v", err)
+	}
+	if gotHeaders == nil || gotHeaders.Get("KC-API-KEY") != "" || gotHeaders.Get("KC-API-SIGN") != "" {
+		t.Fatalf("the request must be sent unsigned without credentials: %v", gotHeaders)
+	}
+}
+
+func TestDoOptional_SurfacesKuCoinsOwnErrorWithoutCredentials(t *testing.T) {
+	exec, _ := newTestExecutor(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":"400001","msg":"Please check the header of your request for KC-API-KEY, KC-API-SIGN, KC-API-TIMESTAMP, KC-API-PASSPHRASE."}`))
+	}, Credentials{})
+	_, err := exec.DoOptional(context.Background(), http.MethodGet, "/api/v1/trade-statistics", nil, nil)
+	var kerr *KucoinError
+	if errors.Is(err, ErrCredentialsRequired) || !errors.As(err, &kerr) || kerr.Code != "400001" || !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("error = %v, want KuCoin's own 400001", err)
+	}
+}
+
+func TestExecutor_IsSafeForConcurrentUse(t *testing.T) {
+	var served atomic.Int64
+	exec, _ := newTestExecutor(t, func(w http.ResponseWriter, r *http.Request) {
+		served.Add(1)
+		_, _ = w.Write([]byte(`{"code":"200000","data":{"path":"` + r.URL.Path + `"}}`))
+	}, Credentials{APIKey: "k", APISecret: "s", APIPassphrase: "p"})
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			var out struct{ Path string }
+			path := "/api/v1/p" + strconv.Itoa(i)
+			var err error
+			switch i % 3 {
+			case 0:
+				_, err = exec.DoPublic(context.Background(), http.MethodGet, path, map[string]string{"q": "v"}, &out)
+			case 1:
+				_, err = exec.Do(context.Background(), http.MethodPost, path, nil, map[string]string{"a": "b"}, &out)
+			default:
+				_, err = exec.DoOptional(context.Background(), http.MethodGet, path, nil, &out)
+			}
+			if err != nil || out.Path != path {
+				t.Errorf("request %d: %v %+v", i, err, out)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if served.Load() != 32 {
+		t.Fatalf("served %d requests", served.Load())
+	}
+}
+
+func TestDo_ContextCancellationInterruptsTheRetryBackoff(t *testing.T) {
+	exec := NewExecutor(ExecutorConfig{
+		BaseURL: func() string {
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"code":"500","msg":"down"}`))
+			}))
+			t.Cleanup(s.Close)
+			return s.URL
+		}(),
+		RetryPolicy: &RetryPolicy{MaxAttempts: 5, BaseDelay: 10 * time.Second, MaxDelay: 10 * time.Second, MaxElapsed: time.Minute},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := exec.DoPublic(ctx, http.MethodGet, "/x", nil, nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want the context error", err)
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Fatalf("cancellation took %v; the backoff sleep must be interruptible", time.Since(start))
 	}
 }

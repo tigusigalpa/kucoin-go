@@ -269,7 +269,7 @@ func (c *Client) AddStopOrder(ctx context.Context, req StopOrderRequest) (*StopO
 // ID. KuCoin returns cancelledOrderIds as an array even for this
 // single-order call.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/cancel-stop-order-by-orderid
+// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/cancel-stop-order-by-orderld
 func (c *Client) CancelStopOrderByID(ctx context.Context, orderID string) (*CancelStopOrderResult, error) {
 	var result CancelStopOrderResult
 	if _, err := c.executor.Do(ctx, http.MethodDelete, "/api/v1/stop-order/"+orderID, nil, nil, &result); err != nil {
@@ -298,7 +298,7 @@ func (c *Client) CancelStopOrderByClientOid(ctx context.Context, clientOid, symb
 // (all optional — an empty call cancels every stop order on the
 // account). orderIDs is a comma-separated list of KuCoin order IDs.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/cancel-stop-orders
+// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/batch-cancel-stop-orders
 func (c *Client) CancelStopOrders(ctx context.Context, symbol, tradeType, orderIDs string) (*CancelStopOrderResult, error) {
 	query := map[string]string{}
 	if symbol != "" {
@@ -320,7 +320,7 @@ func (c *Client) CancelStopOrders(ctx context.Context, symbol, tradeType, orderI
 // GetStopOrderByID looks up a single stop order by its KuCoin-assigned
 // ID.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/get-stop-order-details-by-orderid
+// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/get-stop-order-by-orderld
 func (c *Client) GetStopOrderByID(ctx context.Context, orderID string) (*StopOrder, error) {
 	var result StopOrder
 	if _, err := c.executor.Do(ctx, http.MethodGet, "/api/v1/stop-order/"+orderID, nil, nil, &result); err != nil {
@@ -334,7 +334,7 @@ func (c *Client) GetStopOrderByID(ctx context.Context, orderID string) (*StopOrd
 // (a clientOid is not guaranteed unique across a stop order's full
 // lifecycle the way an orderId is).
 //
-// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/get-stop-order-details-by-clientoid
+// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/get-stop-order-by-clientoid
 func (c *Client) GetStopOrderByClientOid(ctx context.Context, clientOid, symbol string) ([]StopOrder, error) {
 	query := map[string]string{"clientOid": clientOid}
 	if symbol != "" {
@@ -364,7 +364,7 @@ type GetStopOrderListOptions struct {
 // GetStopOrderList lists stop orders, paginated by page number (not
 // cursor) — unlike GetClosedOrders/GetTradeHistory's cursor pagination.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/get-stop-order-list
+// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/get-stop-orders-list
 func (c *Client) GetStopOrderList(ctx context.Context, opts GetStopOrderListOptions) (*StopOrderPage, error) {
 	query := map[string]string{}
 	if opts.Symbol != "" {
@@ -420,7 +420,7 @@ func (c *Client) AddOCOOrder(ctx context.Context, req OCOOrderRequest) (*OCOOrde
 // CancelOCOOrderByID cancels an OCO pair by its KuCoin-assigned order
 // ID. CancelledOrderIDs holds both leg IDs of the cancelled pair.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/cancel-oco-order-by-orderid
+// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/cancel-oco-order-by-orderld
 func (c *Client) CancelOCOOrderByID(ctx context.Context, orderID string) (*CancelOCOOrderResult, error) {
 	var result CancelOCOOrderResult
 	if _, err := c.executor.Do(ctx, http.MethodDelete, "/api/v3/oco/order/"+orderID, nil, nil, &result); err != nil {
@@ -445,7 +445,7 @@ func (c *Client) CancelOCOOrderByClientOid(ctx context.Context, clientOid string
 // (all optional — an empty call cancels every OCO order on the
 // account). orderIDs is a comma-separated list of KuCoin order IDs.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/cancel-multiple-oco-orders
+// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/batch-cancel-oco-order
 func (c *Client) CancelOCOOrders(ctx context.Context, symbol, orderIDs string) (*CancelOCOOrderResult, error) {
 	query := map[string]string{}
 	if symbol != "" {
@@ -465,7 +465,7 @@ func (c *Client) CancelOCOOrders(ctx context.Context, symbol, orderIDs string) (
 // KuCoin-assigned order ID. Call GetOCOOrderDetails for leg-level
 // detail (price/side/stopPrice per leg).
 //
-// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/get-oco-order-info-by-orderid
+// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/get-oco-order-by-orderld
 func (c *Client) GetOCOOrderByID(ctx context.Context, orderID string) (*OCOOrderInfo, error) {
 	var result OCOOrderInfo
 	if _, err := c.executor.Do(ctx, http.MethodGet, "/api/v3/oco/order/"+orderID, nil, nil, &result); err != nil {
@@ -477,7 +477,7 @@ func (c *Client) GetOCOOrderByID(ctx context.Context, orderID string) (*OCOOrder
 // GetOCOOrderByClientOid looks up an OCO pair's flat summary by its
 // caller-assigned client order ID.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/get-oco-order-info-by-clientoid
+// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/get-oco-order-by-clientoid
 func (c *Client) GetOCOOrderByClientOid(ctx context.Context, clientOid string) (*OCOOrderInfo, error) {
 	var result OCOOrderInfo
 	if _, err := c.executor.Do(ctx, http.MethodGet, "/api/v3/oco/client-order/"+clientOid, nil, nil, &result); err != nil {
@@ -490,7 +490,7 @@ func (c *Client) GetOCOOrderByClientOid(ctx context.Context, clientOid string) (
 // two constituent leg orders (see OCOOrderLeg) — a separate, more
 // detailed endpoint from GetOCOOrderByID's flat summary.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/get-oco-order-details
+// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/get-oco-order-detail-by-orderld
 func (c *Client) GetOCOOrderDetails(ctx context.Context, orderID string) (*OCOOrderDetails, error) {
 	var result OCOOrderDetails
 	if _, err := c.executor.Do(ctx, http.MethodGet, "/api/v3/oco/order/details/"+orderID, nil, nil, &result); err != nil {

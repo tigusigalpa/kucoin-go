@@ -59,7 +59,7 @@ type CancelByClientOidResult struct {
 // GetClosedOrders. CancelReason is only present once an order has been
 // cancelled (absent, decoding as zero, on open orders).
 //
-// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/get-order-by-orderid
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/get-order-by-orderld
 type Order struct {
 	ID             string `json:"id"`
 	ClientOid      string `json:"clientOid"`
@@ -187,7 +187,7 @@ type StopOrderRef struct {
 // MARGIN_ISOLATED_TRADE) instead; KuCoin does not echo
 // IsIsolated/AutoBorrow/AutoRepay back on the order record.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/get-stop-order-details-by-orderid
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/get-stop-order-by-orderld
 type StopOrder struct {
 	ID              string `json:"id"`
 	Symbol          string `json:"symbol"`
@@ -263,7 +263,7 @@ type OCOOrderRef struct {
 // GetOCOOrderList. It carries no side/price — only OCOOrderDetails
 // exposes the two constituent legs.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/get-oco-order-info-by-orderid
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/get-oco-order-by-orderld
 type OCOOrderInfo struct {
 	OrderID   string `json:"orderId"`
 	Symbol    string `json:"symbol"`
@@ -291,7 +291,7 @@ type OCOOrderLeg struct {
 // fields as OCOOrderInfo plus the two constituent leg orders. There is
 // no "by ClientOid" variant of this endpoint, unlike GetOCOOrderByID.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/get-oco-order-details
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/orders/get-oco-order-detail-by-orderld
 type OCOOrderDetails struct {
 	OrderID   string        `json:"orderId"`
 	Symbol    string        `json:"symbol"`

@@ -206,7 +206,7 @@ type CancelStopOrderResult struct {
 // GetStopOrderByID/GetStopOrderByClientOid and embedded in
 // GetStopOrderList.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/get-stop-order-details-by-orderid
+// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/get-stop-order-by-orderld
 type StopOrder struct {
 	ID              string `json:"id"`
 	Symbol          string `json:"symbol"`
@@ -287,7 +287,7 @@ type CancelOCOOrderResult struct {
 // GetOCOOrderList. It carries no side/price — only OCOOrderDetails
 // exposes the two constituent legs.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/get-oco-order-info-by-orderid
+// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/get-oco-order-by-orderld
 type OCOOrderInfo struct {
 	OrderID   string `json:"orderId"`
 	Symbol    string `json:"symbol"`
@@ -314,7 +314,7 @@ type OCOOrderLeg struct {
 // OCOOrderDetails is the full OCO-pair record — the same summary fields
 // as OCOOrderInfo plus the two constituent leg orders.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/get-oco-order-details
+// Docs: https://www.kucoin.com/docs-new/rest/spot-trading/orders/get-oco-order-detail-by-orderld
 type OCOOrderDetails struct {
 	OrderID   string        `json:"orderId"`
 	Symbol    string        `json:"symbol"`

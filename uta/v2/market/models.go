@@ -196,8 +196,14 @@ func (k *Kline) UnmarshalJSON(data []byte) error {
 type OrderBookOptions struct {
 	TradeType TradeType
 	Symbol    string
+	// Limit is the number of levels per side. KuCoin requires a limit of 20 or
+	// 100; for the complete book set Full instead.
 	Limit     int
 	RPIFilter int
+	// Full requests the complete order book (limit=FULL) and takes precedence
+	// over Limit. A book kept in step with the incremental feed needs it: a
+	// truncated snapshot would leave every level beyond the cut-off missing.
+	Full bool
 }
 
 // OrderBook is a UTA v2 depth snapshot. Bids and Asks retain every value in

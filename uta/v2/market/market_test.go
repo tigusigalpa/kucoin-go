@@ -300,6 +300,19 @@ func TestGetV2MarketCore(t *testing.T) {
 		}
 	})
 
+	t.Run("order book can ask for the complete book", func(t *testing.T) {
+		client := newAuthenticatedTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/ua/v2/market/orderbook" || r.URL.Query().Get("limit") != "FULL" {
+				t.Errorf("request = %s?%s, want limit=FULL (Full wins over Limit)", r.URL.Path, r.URL.RawQuery)
+			}
+			writeOK(t, w, `{"tradeType":"FUTURES","symbol":"XBTUSDTM","sequence":1,"bids":[["1","2"]],"asks":[["3","4"]]}`)
+		})
+		result, err := client.GetOrderBook(context.Background(), OrderBookOptions{TradeType: TradeTypeFutures, Symbol: "XBTUSDTM", Limit: 20, Full: true})
+		if err != nil || result.Asks[0][0] != "3" {
+			t.Fatalf("GetOrderBook = %+v, %v", result, err)
+		}
+	})
+
 	t.Run("trades", func(t *testing.T) {
 		client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/api/ua/v2/market/trade" || r.URL.Query().Get("symbol") != "BTC-USDT" {

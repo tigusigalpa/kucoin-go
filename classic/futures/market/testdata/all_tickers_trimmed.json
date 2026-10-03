@@ -1,0 +1,5 @@
+{"code":"200000","data":[{"sequence":1738647796318,"symbol":"ANIMEUSDTM","side":"sell","size":128,"tradeId":"1738713165337","price":"0.0033","bestBidPrice":"0.003299","bestBidSize":1303,"bestAskPrice":"0.003304","bestAskSize":1314,"ts":1790982320766000000},
+{"sequence":1780056700231,"symbol":"MPUSDTM","side":"sell","size":68,"tradeId":"1780092457044","price":"47.02","bestBidPrice":"47.01","bestBidSize":2,"bestAskPrice":"47.13","bestAskSize":1,"ts":1790982402995000000},
+{"sequence":1748100434839,"symbol":"XBTUSDTM","side":"buy","size":3,"tradeId":"1945734806737","price":"84477","bestBidPrice":"84476.9","bestBidSize":568,"bestAskPrice":"84477","bestAskSize":107,"ts":1790982404079000000},
+{"sequence":1705015328713,"symbol":"XBTUSDM","side":"buy","size":100,"tradeId":"1705843456640","price":"84485.4","bestBidPrice":"84458.9","bestBidSize":1650,"bestAskPrice":"84473","bestAskSize":86,"ts":1790981543440000000},
+{"sequence":1695472834252,"symbol":"SNXUSDTM","side":"sell","size":3474,"tradeId":"1695630681745","price":"0.2468","bestBidPrice":"0.2467","bestBidSize":5000,"bestAskPrice":"0.2469","bestAskSize":129,"ts":1790982403479000000}]}

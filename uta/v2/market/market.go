@@ -136,7 +136,8 @@ func (c *Client) GetKlines(ctx context.Context, opts KlineOptions) (*KlineList, 
 // GetOrderBook returns an authenticated UTA v2 order-book snapshot. KuCoin
 // assigns this endpoint the General permission even though its data is market
 // data, so calls without complete credentials return
-// transport.ErrCredentialsRequired before making a request.
+// transport.ErrCredentialsRequired before making a request. KuCoin requires a
+// depth: Limit 20 or 100, or Full for the whole book.
 //
 // Docs: https://www.kucoin.com/docs-new/v2/rest/ua/get-orderbook
 func (c *Client) GetOrderBook(ctx context.Context, opts OrderBookOptions) (*OrderBook, error) {
@@ -144,7 +145,11 @@ func (c *Client) GetOrderBook(ctx context.Context, opts OrderBookOptions) (*Orde
 		"tradeType": string(opts.TradeType),
 		"symbol":    opts.Symbol,
 	}
-	putIntIfPositive(query, "limit", opts.Limit)
+	if opts.Full {
+		query["limit"] = "FULL"
+	} else {
+		putIntIfPositive(query, "limit", opts.Limit)
+	}
 	putIntIfPositive(query, "rpiFilter", opts.RPIFilter)
 	var result OrderBook
 	if _, err := c.executor.Do(ctx, http.MethodGet, "/api/ua/v2/market/orderbook", query, nil, &result); err != nil {

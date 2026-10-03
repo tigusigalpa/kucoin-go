@@ -1,771 +1,318 @@
-// Package uta implements a reconnecting WebSocket client for KuCoin's current
-// UTA WebSocket v2 push API. It intentionally remains separate from
-// websocket/classic: their authentication and message envelopes differ.
+// Package uta implements a managed WebSocket client for KuCoin's current UTA
+// WebSocket v2 push API: connection lifecycle, heartbeats, signed
+// authentication of private connections, reconnection, resubscription and
+// routing of pushes to subscriptions by channel, symbol, depth and interval.
+// It intentionally remains separate from websocket/classic: their
+// authentication and message envelopes differ.
 //
-// Current private UTA v2 channels authenticate after welcome using an HMAC
-// signature. Supply WithCredentials for that path. The token argument of
+// Current private UTA v2 channels authenticate after the welcome frame with an
+// HMAC signature. Supply WithCredentials for that path. The token argument of
 // NewClient remains only for source compatibility with the legacy token-based
 // UTA API; do not use it for new private UTA v2 integrations.
+//
+// The typed streaming package uta/v2/streaming builds on this client and is what
+// applications should normally use; this package is the low-level layer for raw
+// pushes and for channels KuCoin adds after this SDK was released.
 //
 // Docs: https://www.kucoin.com/docs-new/websocket-api/introduction
 package uta
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
-	"strconv"
-	"sync"
-	"time"
+	"sync/atomic"
 
-	"github.com/gorilla/websocket"
-	"github.com/tigusigalpa/kucoin-go/auth"
+	"github.com/tigusigalpa/kucoin-go/internal/wsengine"
+	"github.com/tigusigalpa/kucoin-go/stream"
 	"github.com/tigusigalpa/kucoin-go/transport"
 )
 
-// Fixed UTA WebSocket hosts. Unlike Classic, the token response carries
-// no instanceServers list — these hosts are documented constants.
+// Fixed UTA WebSocket hosts. Unlike Classic, no token request is needed: these
+// hosts are documented constants.
 //
-// Docs: https://www.kucoin.com/docs-new/websocket-api/base-info/get-private-token-uta
+// Docs: https://www.kucoin.com/docs-new/websocket-api/introduction
 const (
 	PublicSpotWSURL    = "wss://x-push-spot.kucoin.com"
 	PublicFuturesWSURL = "wss://x-push-futures.kucoin.com"
 	PrivateWSURL       = "wss://wsapi-push.kucoin.com"
 )
 
+// Sentinel errors, shared with every other WebSocket client of this module so
+// errors.Is works across them.
 var (
 	// ErrAlreadyConnected is returned when Connect is called while a socket is
 	// already active. One Client owns exactly one WebSocket connection.
-	ErrAlreadyConnected = errors.New("kucoin: uta ws: already connected")
+	ErrAlreadyConnected = stream.ErrAlreadyConnected
 	// ErrReconnecting is returned when a caller tries to manually connect while
 	// this Client is restoring an interrupted connection.
-	ErrReconnecting = errors.New("kucoin: uta ws: reconnect in progress")
+	ErrReconnecting = stream.ErrReconnecting
 	// ErrAuthenticationFailed is returned when KuCoin rejects the explicit
 	// private-channel authentication request.
-	ErrAuthenticationFailed = errors.New("kucoin: uta ws: authentication failed")
+	ErrAuthenticationFailed = stream.ErrAuthFailed
 	// ErrIncompleteCredentials is returned before writing an authentication
 	// request when WithCredentials did not receive a complete key set.
-	ErrIncompleteCredentials = errors.New("kucoin: uta ws: complete API credentials are required for authentication")
-	// ErrSubscriptionFailed is returned when KuCoin negatively acknowledges a
-	// UTA channel subscription.
+	ErrIncompleteCredentials = stream.ErrIncompleteCredentials
+	// ErrSubscriptionFailed is returned (wrapping the *stream.ServerError with
+	// KuCoin's reason) when KuCoin negatively acknowledges a subscription.
 	ErrSubscriptionFailed = errors.New("kucoin: uta ws: subscription failed")
 )
 
-// Push is a single channel data push. T identifies the channel+product
-// (e.g. "ticker.SPOT", "obu.FUTURES"); P is the gateway push timestamp in
-// nanoseconds; Data is the raw per-channel payload. Prefer a typed helper
-// such as SubscribeTicker where one is available.
+// Push is a single channel data push. T identifies the channel and product
+// (e.g. "ticker.SPOT", "obu.FUTURES") or, for a few channels, just the channel
+// ("mark-price"); P is the gateway push timestamp in nanoseconds; Data is the raw
+// per-channel payload. Prefer the typed streams of uta/v2/streaming where one
+// exists.
 type Push struct {
-	T    string          `json:"T"`
-	P    int64           `json:"P"`
-	Data json.RawMessage `json:"d"`
+	T string `json:"T"`
+	P int64  `json:"P"`
+	// Kind is "snapshot" or "delta" on order-book pushes.
+	Kind string `json:"t,omitempty"`
+	// Depth is the order-book depth the push belongs to ("1", "5", "50",
+	// "increment", "increment@10ms").
+	Depth string          `json:"dp,omitempty"`
+	Data  json.RawMessage `json:"d"`
 }
 
-// Logger is a minimal structured-logging interface.
-type Logger interface {
-	Debug(msg string, args ...any)
-	Info(msg string, args ...any)
-	Warn(msg string, args ...any)
-	Error(msg string, args ...any)
-}
-
-type noopLogger struct{}
-
-func (noopLogger) Debug(string, ...any) {}
-func (noopLogger) Info(string, ...any)  {}
-func (noopLogger) Warn(string, ...any)  {}
-func (noopLogger) Error(string, ...any) {}
+// Logger is a minimal structured-logging interface; it is the same type as
+// stream.Logger.
+type Logger = stream.Logger
 
 // Option configures a Client at construction time.
 type Option func(*Client)
 
 // WithLogger sets a structured logger for connection lifecycle events.
-func WithLogger(l Logger) Option {
-	return func(c *Client) { c.logger = l }
-}
+func WithLogger(l Logger) Option { return func(c *Client) { c.cfg.Logger = l } }
 
-// WithAutoReconnect toggles automatic reconnection with exponential
-// backoff on unexpected disconnects. Enabled by default.
+// WithAutoReconnect toggles automatic reconnection with exponential backoff on
+// unexpected disconnects. Enabled by default.
 func WithAutoReconnect(enabled bool) Option {
-	return func(c *Client) { c.autoReconnect = enabled }
+	return func(c *Client) { c.cfg.Reconnect.Disabled = !enabled }
 }
 
-// WithCredentials enables current UTA v2 private-channel authentication.
-// KuCoin requires API key, secret and passphrase after the server's welcome
-// frame. The credentials are used only to build the auth frame and are never
-// logged.
+// WithCredentials enables current UTA v2 private-channel authentication. KuCoin
+// requires API key, secret and passphrase after the server's welcome frame. The
+// credentials are used only to build the auth frame and are never logged. The
+// connection re-authenticates on every reconnect.
 //
 // Docs: https://www.kucoin.com/docs-new/websocket-api/introduction
 func WithCredentials(credentials transport.Credentials) Option {
-	return func(c *Client) { c.credentials = &credentials }
+	return func(c *Client) { c.proto.creds = &credentials }
 }
 
-const (
-	// KuCoin documents UTA ping frequency must not exceed 1/sec and pongs
-	// should arrive within ~3s; a much more relaxed default interval is
-	// used here since a ping-per-second is only a ceiling, not a
-	// requirement.
-	defaultPingInterval = 15 * time.Second
-	pongWaitTimeout     = 10 * time.Second
-	welcomeWaitTimeout  = 10 * time.Second
-	reconnectMin        = 1 * time.Second
-	reconnectMax        = 60 * time.Second
-	subBufferSize       = 256
-)
+// WithClock sets the clock used for the authentication timestamp (for example a
+// clock corrected against KuCoin's server time).
+func WithClock(clock transport.Clock) Option { return func(c *Client) { c.proto.clock = clock } }
 
-type subscription struct {
-	channel   string
-	tradeType string
-	symbol    string
-	ch        chan Push
-	tickerCh  chan Ticker
+// WithStreamOptions applies the shared connection options of package stream
+// (reconnect policy, timeouts, buffer sizes, event handler, dialer, ...).
+func WithStreamOptions(opts ...stream.Option) Option {
+	return func(c *Client) {
+		for _, opt := range opts {
+			if opt != nil {
+				opt(&c.cfg)
+			}
+		}
+	}
 }
 
-// Client is a reconnecting WebSocket client for one UTA WS host (public
-// spot, public futures, or private — see the exported *WSURL constants).
+// Client is a reconnecting WebSocket client for one UTA WS host (public spot,
+// public futures, or private — see the exported *WSURL constants). It is safe
+// for concurrent use.
 type Client struct {
-	host  string
-	token string // empty for public channels
+	cfg   stream.Config
+	proto *protocol
+	conn  *wsengine.Conn
 
-	pingInterval  time.Duration
-	logger        Logger
-	autoReconnect bool
-
-	mu            sync.RWMutex
-	writeMu       sync.Mutex
-	conn          *websocket.Conn
-	subscriptions map[string]*subscription
-	ackWaiters    map[string]chan bool
-	authWaiters   map[string]chan bool
-	credentials   *transport.Credentials
-	closed        bool
-	reconnecting  bool
-	shutdown      chan struct{}
-	done          chan struct{}
-	welcomed      chan struct{}
+	// raw holds the subscriptions made through SubscribeSpec, one per channel
+	// description; ticker those made through SubscribeTicker.
+	raw    wsengine.Shared[Push]
+	ticker wsengine.Shared[Ticker]
 }
 
-// NewClient creates a Client for one UTA WS host. token is retained for
-// source compatibility with the legacy UTA API. Current private UTA v2
-// channels should instead use WithCredentials.
+// NewClient creates a Client for one UTA WS host. token is retained for source
+// compatibility with the legacy UTA API. Current private UTA v2 channels should
+// instead use WithCredentials.
 func NewClient(host, token string, opts ...Option) *Client {
 	c := &Client{
-		host:          host,
-		token:         token,
-		pingInterval:  defaultPingInterval,
-		logger:        noopLogger{},
-		autoReconnect: true,
-		subscriptions: make(map[string]*subscription),
-		ackWaiters:    make(map[string]chan bool),
-		authWaiters:   make(map[string]chan bool),
-		shutdown:      make(chan struct{}),
+		proto: &protocol{host: host, token: token},
 	}
 	for _, opt := range opts {
-		opt(c)
+		if opt != nil {
+			opt(c)
+		}
 	}
+	c.cfg = c.cfg.WithDefaults()
+	c.conn = wsengine.New(c.proto, c.cfg)
 	return c
 }
 
-func randomID() string {
-	buf := make([]byte, 8)
-	_, _ = rand.Read(buf)
-	return fmt.Sprintf("%x", buf)
-}
+// Connect dials the host and blocks until KuCoin's welcome message arrives and,
+// for a client with credentials, authentication succeeded (or ctx is done / the
+// connect timeout elapses).
+func (c *Client) Connect(ctx context.Context) error { return c.conn.Connect(ctx) }
 
-// Connect dials the host and blocks until KuCoin's welcome message
-// arrives (or ctx is done / a timeout elapses).
-func (c *Client) Connect(ctx context.Context) error {
-	return c.connect(ctx, false)
-}
+// Close terminates the connection, ends every subscription and waits for the
+// client's goroutines to exit. Safe to call multiple times.
+func (c *Client) Close() error { return c.conn.Close() }
 
-func (c *Client) connect(ctx context.Context, reconnect bool) error {
-	c.mu.Lock()
-	if reconnect {
-		if c.closed {
-			c.mu.Unlock()
-			return context.Canceled
-		}
-	} else {
-		if c.conn != nil {
-			c.mu.Unlock()
-			return ErrAlreadyConnected
-		}
-		if c.reconnecting {
-			c.mu.Unlock()
-			return ErrReconnecting
-		}
-		if c.closed {
-			c.closed = false
-			c.shutdown = make(chan struct{})
-		}
-	}
-	c.done = make(chan struct{})
-	c.welcomed = make(chan struct{})
-	done := c.done
-	welcomed := c.welcomed
-	c.mu.Unlock()
+// Shutdown is Close with a caller-supplied deadline.
+func (c *Client) Shutdown(ctx context.Context) error { return c.conn.Shutdown(ctx) }
 
-	conn, err := c.dial(ctx)
-	if err != nil {
-		c.discardConnection(nil, done)
-		return err
-	}
+// State returns the connection lifecycle state.
+func (c *Client) State() stream.State { return c.conn.State() }
 
-	c.mu.Lock()
-	if c.closed || c.done != done {
-		c.mu.Unlock()
-		_ = conn.Close()
-		return context.Canceled
-	}
-	c.conn = conn
-	c.mu.Unlock()
+// Events returns the lifecycle event channel (see stream.Event). It is closed
+// when the client closes.
+func (c *Client) Events() <-chan stream.Event { return c.conn.Events() }
 
-	_ = conn.SetReadDeadline(time.Now().Add(c.pingInterval + pongWaitTimeout))
-	go c.readPump(conn, done)
-	go c.pingPump(conn, done)
+// Stats returns a snapshot of the connection counters.
+func (c *Client) Stats() stream.Stats { return c.conn.Stats() }
 
-	select {
-	case <-welcomed:
-		if err := c.authenticate(ctx, conn); err != nil {
-			c.disconnect(conn, done)
-			return err
-		}
-		c.logger.Info("kucoin: uta ws connected")
-		return nil
-	case <-time.After(welcomeWaitTimeout):
-		c.disconnect(conn, done)
-		return fmt.Errorf("kucoin: uta ws: timed out waiting for welcome message")
-	case <-ctx.Done():
-		c.disconnect(conn, done)
-		return ctx.Err()
-	}
-}
+// Done is closed when the client is closed, by Close or by a fatal error.
+func (c *Client) Done() <-chan struct{} { return c.conn.Done() }
 
-func (c *Client) authenticate(ctx context.Context, conn *websocket.Conn) error {
-	c.mu.RLock()
-	credentials := c.credentials
-	done := c.done
-	c.mu.RUnlock()
-	if credentials == nil {
-		return nil
-	}
-	if credentials.APIKey == "" || credentials.APISecret == "" || credentials.APIPassphrase == "" {
-		return ErrIncompleteCredentials
-	}
+// Err returns the fatal error that closed the client, or nil.
+func (c *Client) Err() error { return c.conn.Err() }
 
-	timestamp := auth.TimestampMillis(time.Now())
-	signer := auth.NewSigner(credentials.APISecret)
-	id := randomID()
-	ack := make(chan bool, 1)
+// ReportDecodeError records a push that a typed decoder rejected; the error is
+// counted in Stats and published as a stream.EventDecodeError.
+func (c *Client) ReportDecodeError(err error) { c.conn.ReportDecodeError(err) }
 
-	c.mu.Lock()
-	if c.conn != conn || c.closed {
-		c.mu.Unlock()
-		return context.Canceled
-	}
-	c.authWaiters[id] = ack
-	c.mu.Unlock()
-
-	request := map[string]string{
-		"id":                id,
-		"op":                "auth",
-		"kc-api-key":        credentials.APIKey,
-		"kc-api-sign":       signer.Sign(timestamp, "POST", "/api/websocket/users/verify", ""),
-		"kc-api-timestamp":  timestamp,
-		"kc-api-passphrase": signer.SignPassphrase(credentials.APIPassphrase),
-	}
-	if err := c.writeJSONTo(conn, request); err != nil {
-		c.removeAuthWaiter(id, ack)
-		return err
-	}
-
-	timer := time.NewTimer(welcomeWaitTimeout)
-	defer timer.Stop()
-	select {
-	case ok := <-ack:
-		if !ok {
-			return ErrAuthenticationFailed
-		}
-		return nil
-	case <-ctx.Done():
-		c.removeAuthWaiter(id, ack)
-		return ctx.Err()
-	case <-done:
-		c.removeAuthWaiter(id, ack)
-		return context.Canceled
-	case <-timer.C:
-		c.removeAuthWaiter(id, ack)
-		return fmt.Errorf("kucoin: uta ws: timed out waiting for authentication")
-	}
-}
-
-func (c *Client) removeAuthWaiter(id string, waiter chan bool) {
-	c.mu.Lock()
-	if c.authWaiters[id] == waiter {
-		delete(c.authWaiters, id)
-	}
-	c.mu.Unlock()
-}
-
-func (c *Client) dial(ctx context.Context) (*websocket.Conn, error) {
-	host, err := url.Parse(c.host)
-	if err != nil {
-		return nil, fmt.Errorf("kucoin: uta ws: parse host: %w", err)
-	}
-	if c.token != "" {
-		query := host.Query()
-		query.Set("token", c.token)
-		host.RawQuery = query.Encode()
-	}
-
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, host.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("kucoin: uta ws dial: %w", err)
-	}
-	return conn, nil
-}
-
-// Subscribe subscribes to a channel (e.g. "ticker", "obu", "order",
-// "orderAll") for a tradeType ("SPOT", "FUTURES", "UNIFIED") and optional
-// symbol, returning a buffered channel of pushes. KuCoin's ack for this
-// protocol acknowledges a successful subscription with result=true.
-// Subscribe waits for that acknowledgement before returning its buffered
-// channel. The subscription is automatically restored after a reconnect.
+// Subscribe subscribes to a channel (e.g. "ticker", "obu", "order", "orderAll")
+// for a tradeType ("SPOT", "FUTURES", "UNIFIED") and optional symbol, returning
+// a channel of raw pushes. It waits for KuCoin's acknowledgement; a rejection is
+// returned wrapping both ErrSubscriptionFailed and the *stream.ServerError with
+// KuCoin's reason. The subscription is restored automatically after a
+// reconnect.
+//
+// Only pushes for the requested symbol are delivered. Channels that need more
+// parameters (kline interval, order-book depth, several symbols) are
+// subscribed with SubscribeSpec; typed payloads come from uta/v2/streaming.
 func (c *Client) Subscribe(channel, tradeType, symbol string) (<-chan Push, error) {
-	key := channel + ":" + tradeType + ":" + symbol
-	c.mu.Lock()
-	sub, exists := c.subscriptions[key]
-	if exists {
-		c.mu.Unlock()
-		return sub.ch, nil
-	}
-	sub = &subscription{channel: channel, tradeType: tradeType, symbol: symbol, ch: make(chan Push, subBufferSize)}
-	c.subscriptions[key] = sub
-	id := randomID()
-	ack := make(chan bool, 1)
-	c.ackWaiters[id] = ack
-	done := c.done
-	c.mu.Unlock()
-	cleanup := func() {
-		c.mu.Lock()
-		if c.ackWaiters[id] == ack {
-			delete(c.ackWaiters, id)
-		}
-		if c.subscriptions[key] == sub {
-			delete(c.subscriptions, key)
-			close(sub.ch)
-			if sub.tickerCh != nil {
-				close(sub.tickerCh)
-			}
-		}
-		c.mu.Unlock()
-	}
-
-	req := map[string]any{
-		"id":        id,
-		"action":    "subscribe",
-		"channel":   channel,
-		"tradeType": tradeType,
-	}
+	spec := SubscribeSpec{Channel: channel, TradeType: tradeType}
 	if symbol != "" {
-		req["symbol"] = symbol
+		spec.Symbols = []string{symbol}
 	}
-	if err := c.writeJSON(req); err != nil {
-		cleanup()
+	return c.SubscribeSpec(context.Background(), spec)
+}
+
+// SubscribeSpec subscribes to the channel described by spec and returns a
+// channel of raw pushes; see Subscribe for the semantics. Subscribing a spec
+// that is already subscribed through SubscribeSpec returns the existing
+// channel, also when several goroutines subscribe it at the same time.
+func (c *Client) SubscribeSpec(ctx context.Context, spec SubscribeSpec) (<-chan Push, error) {
+	sub, err := c.raw.Get(ctx, spec.Name(), func() (*stream.Subscription[Push], error) {
+		return SubscribeTyped(ctx, c, spec, func(p *Push) (Push, bool, error) { return *p, true, nil })
+	})
+	if err != nil {
 		return nil, err
 	}
-
-	select {
-	case ok := <-ack:
-		if !ok {
-			cleanup()
-			return nil, ErrSubscriptionFailed
-		}
-		return sub.ch, nil
-	case <-time.After(welcomeWaitTimeout):
-		cleanup()
-		return nil, fmt.Errorf("kucoin: uta ws: subscribe to %q timed out waiting for acknowledgement", channel)
-	case <-done:
-		cleanup()
-		return nil, context.Canceled
-	}
+	return sub.C(), nil
 }
 
-// Unsubscribe removes a channel subscription and closes its data
-// channel.
+// Unsubscribe removes a channel subscription and closes its data channel. It is
+// a no-op for a subscription that does not exist.
 func (c *Client) Unsubscribe(channel, tradeType, symbol string) error {
-	key := channel + ":" + tradeType + ":" + symbol
-	c.mu.Lock()
-	sub, exists := c.subscriptions[key]
-	if exists {
-		delete(c.subscriptions, key)
-	}
-	c.mu.Unlock()
-
-	if !exists {
-		return nil
-	}
-	close(sub.ch)
-	if sub.tickerCh != nil {
-		close(sub.tickerCh)
-	}
-
-	req := map[string]any{
-		"id":        randomID(),
-		"action":    "unsubscribe",
-		"channel":   channel,
-		"tradeType": tradeType,
-	}
+	spec := SubscribeSpec{Channel: channel, TradeType: tradeType}
 	if symbol != "" {
-		req["symbol"] = symbol
+		spec.Symbols = []string{symbol}
 	}
-	return c.writeJSON(req)
+	return c.UnsubscribeSpec(spec)
 }
 
-// Close terminates the connection and stops all background loops. Safe
-// to call multiple times.
-func (c *Client) Close() error {
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
+// UnsubscribeSpec removes the subscription described by spec.
+func (c *Client) UnsubscribeSpec(spec SubscribeSpec) error {
+	name := spec.Name()
+	if sub := c.raw.Remove(name); sub != nil {
+		return sub.Close()
+	}
+	return c.conn.UnsubscribeName(name)
+}
+
+// DecodeFunc converts a push into a typed update. Return ok=false to skip a push
+// that carries no update and an error for a malformed payload (it is reported
+// and skipped; the subscription continues).
+type DecodeFunc[T any] func(p *Push) (v T, ok bool, err error)
+
+// SubscribeTyped subscribes to the channel described by spec and delivers every
+// push, decoded by decode, on the returned stream.Subscription. It is the
+// building block of the typed streaming packages and the supported way to consume
+// a channel this SDK does not know yet.
+func SubscribeTyped[T any](ctx context.Context, c *Client, spec SubscribeSpec, decode DecodeFunc[T], opts ...stream.SubscribeOption) (*stream.Subscription[T], error) {
+	sc := stream.NewSubscribeConfig(opts...)
+	var handle atomic.Pointer[wsengine.SubHandle]
+	sub := stream.NewSubscription[T](spec.Name(), 0, func() error {
+		if h := handle.Load(); h != nil {
+			return h.Close()
+		}
 		return nil
-	}
-	c.closed = true
-	conn := c.conn
-	done := c.done
-	shutdown := c.shutdown
-	c.conn = nil
-	c.done = nil
-	c.welcomed = nil
-	subscriptions := c.subscriptions
-	c.subscriptions = make(map[string]*subscription)
-	c.ackWaiters = make(map[string]chan bool)
-	c.authWaiters = make(map[string]chan bool)
-	closeSignal(done)
-	closeSignal(shutdown)
-	c.mu.Unlock()
-
-	for _, sub := range subscriptions {
-		close(sub.ch)
-		if sub.tickerCh != nil {
-			close(sub.tickerCh)
+	})
+	decoder := func(f stream.Frame) (T, bool, error) {
+		push, ok := f.Msg.(*Push)
+		if !ok {
+			var zero T
+			return zero, false, nil
 		}
+		return decode(push)
 	}
-	if conn != nil {
-		return conn.Close()
+	h, err := c.conn.Subscribe(ctx, c.engineSpec(spec, stream.NewHandler(sub, decoder, c.conn.ReportDecodeError), sc))
+	if err != nil {
+		return nil, wrapSubscribeError(err)
 	}
-	return nil
+	handle.Store(h)
+	sub.BindDropped(h.Dropped)
+	return sub, nil
 }
 
-func (c *Client) writeJSON(v any) error {
-	c.mu.RLock()
-	conn := c.conn
-	c.mu.RUnlock()
-	return c.writeJSONTo(conn, v)
+// SubscribeHandler subscribes to the channel described by spec and feeds every
+// update to h, in order, from a single goroutine. It is for consumers that need
+// more than a stream of decoded values, such as order-book maintenance, which
+// must react to gaps and reconnects. Closing the returned handle unsubscribes.
+func (c *Client) SubscribeHandler(ctx context.Context, spec SubscribeSpec, h stream.Handler, opts ...stream.SubscribeOption) (*Handle, error) {
+	if h == nil {
+		return nil, errors.New("kucoin: uta ws: SubscribeHandler needs a handler")
+	}
+	sh, err := c.conn.Subscribe(ctx, c.engineSpec(spec, h, stream.NewSubscribeConfig(opts...)))
+	if err != nil {
+		return nil, wrapSubscribeError(err)
+	}
+	return &Handle{h: sh}, nil
 }
 
-func (c *Client) writeJSONTo(conn *websocket.Conn, v any) error {
-	if conn == nil {
-		return fmt.Errorf("kucoin: uta ws: not connected")
-	}
-	// gorilla/websocket permits only one concurrent writer per connection.
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-
-	c.mu.RLock()
-	current := c.conn
-	closed := c.closed
-	c.mu.RUnlock()
-	if closed || current != conn {
-		return fmt.Errorf("kucoin: uta ws: not connected")
-	}
-	return conn.WriteJSON(v)
-}
-
-func (c *Client) pingPump(conn *websocket.Conn, done <-chan struct{}) {
-	ticker := time.NewTicker(c.pingInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-done:
-			return
-		case <-ticker.C:
-			if err := c.writeJSONTo(conn, map[string]string{"id": randomID(), "op": "ping", "timestamp": strconv.FormatInt(time.Now().UnixMilli(), 10)}); err != nil {
-				c.logger.Warn("kucoin: uta ws ping failed", "error", err)
-			}
-		}
+func (c *Client) engineSpec(spec SubscribeSpec, h stream.Handler, sc stream.SubscribeConfig) wsengine.Spec {
+	return wsengine.Spec{
+		Name:        spec.Name(),
+		Routes:      spec.routes(),
+		Subscribe:   func(id string) []byte { return spec.frame("subscribe", id) },
+		Unsubscribe: func(id string) []byte { return spec.frame("unsubscribe", id) },
+		Handler:     h,
+		Buffer:      sc.Buffer,
+		Overflow:    sc.Overflow,
+		OverflowSet: sc.OverflowSet,
 	}
 }
 
-func controlResultOK(raw json.RawMessage) bool {
-	var boolean bool
-	if err := json.Unmarshal(raw, &boolean); err == nil {
-		return boolean
+// wrapSubscribeError makes a rejection by KuCoin match ErrSubscriptionFailed
+// while keeping the *stream.ServerError.
+func wrapSubscribeError(err error) error {
+	var se *stream.ServerError
+	if errors.As(err, &se) {
+		return fmt.Errorf("%w: %w", ErrSubscriptionFailed, err)
 	}
-	var text string
-	return json.Unmarshal(raw, &text) == nil && text == "true"
+	return err
 }
 
-func (c *Client) readPump(conn *websocket.Conn, done chan struct{}) {
-	for {
-		select {
-		case <-done:
-			return
-		default:
-		}
+// Handle is a live subscription created by SubscribeHandler.
+type Handle struct{ h *wsengine.SubHandle }
 
-		_, raw, err := conn.ReadMessage()
-		if err != nil {
-			c.logger.Warn("kucoin: uta ws read error", "error", err)
-			if c.disconnect(conn, done) && c.autoReconnect {
-				c.startReconnect()
-			}
-			return
-		}
-		_ = conn.SetReadDeadline(time.Now().Add(c.pingInterval + pongWaitTimeout))
+// Name returns the subscription identity.
+func (h *Handle) Name() string { return h.h.Name() }
 
-		c.handleMessageForConnection(conn, done, raw)
-	}
-}
+// Dropped returns how many updates the overflow policy discarded for this
+// subscription so far.
+func (h *Handle) Dropped() uint64 { return h.h.Dropped() }
 
-func closeSignal(ch chan struct{}) {
-	if ch == nil {
-		return
-	}
-	select {
-	case <-ch:
-	default:
-		close(ch)
-	}
-}
-
-// disconnect removes a specific connection only if it is still the active
-// generation. This prevents a stale reader from tearing down a newer socket.
-func (c *Client) disconnect(conn *websocket.Conn, done chan struct{}) bool {
-	c.mu.Lock()
-	active := c.conn == conn && c.done == done
-	if active {
-		c.conn = nil
-		closeSignal(done)
-	}
-	closed := c.closed
-	c.mu.Unlock()
-	_ = conn.Close()
-	return active && !closed
-}
-
-func (c *Client) discardConnection(conn *websocket.Conn, done chan struct{}) {
-	c.mu.Lock()
-	if c.done == done {
-		if c.conn == conn {
-			c.conn = nil
-		}
-		c.done = nil
-		c.welcomed = nil
-		closeSignal(done)
-	}
-	c.mu.Unlock()
-	if conn != nil {
-		_ = conn.Close()
-	}
-}
-
-func (c *Client) isClosed() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.closed
-}
-
-func (c *Client) startReconnect() {
-	c.mu.Lock()
-	if c.closed || c.reconnecting {
-		c.mu.Unlock()
-		return
-	}
-	c.reconnecting = true
-	c.mu.Unlock()
-	go c.reconnectLoop()
-}
-
-func (c *Client) handleMessage(raw []byte) {
-	c.handleMessageForConnection(nil, nil, raw)
-}
-
-// handleMessageForConnection rejects frames from a superseded socket before
-// they can complete a new welcome/authentication handshake or reach a current
-// subscription. The nil form keeps the package-level decoder testable without
-// a network connection.
-func (c *Client) handleMessageForConnection(conn *websocket.Conn, done chan struct{}, raw []byte) {
-	if conn != nil {
-		c.mu.RLock()
-		active := c.conn == conn && c.done == done
-		c.mu.RUnlock()
-		if !active {
-			return
-		}
-	}
-
-	// Welcome: {"sessionId":"...","message":"welcome","pingInterval":30000}
-	var welcome struct {
-		SessionID    string `json:"sessionId"`
-		Message      string `json:"message"`
-		PingInterval int64  `json:"pingInterval"`
-	}
-	if err := json.Unmarshal(raw, &welcome); err == nil && welcome.Message == "welcome" {
-		c.mu.RLock()
-		welcomed := c.welcomed
-		c.mu.RUnlock()
-		if welcomed != nil {
-			select {
-			case <-welcomed:
-			default:
-				close(welcomed)
-			}
-		}
-		return
-	}
-
-	// Pong / ack: {"id":"...","op":"pong"} or
-	// {"id":"...","result":true}. The API documentation has used both
-	// boolean and string result forms, so accept both safely.
-	var control struct {
-		ID     string          `json:"id"`
-		Type   string          `json:"type"`
-		Op     string          `json:"op"`
-		Result json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(raw, &control); err == nil {
-		if control.Type == "pong" || control.Op == "pong" {
-			return
-		}
-		if len(control.Result) != 0 {
-			ok := controlResultOK(control.Result)
-			c.mu.Lock()
-			if ch, exists := c.authWaiters[control.ID]; exists {
-				delete(c.authWaiters, control.ID)
-				ch <- ok
-			}
-			if ch, exists := c.ackWaiters[control.ID]; exists {
-				delete(c.ackWaiters, control.ID)
-				ch <- ok
-			}
-			c.mu.Unlock()
-			return
-		}
-	}
-
-	var push Push
-	if err := json.Unmarshal(raw, &push); err != nil || push.T == "" {
-		c.logger.Warn("kucoin: uta ws decode push failed or unrecognized message", "raw", string(raw))
-		return
-	}
-
-	c.dispatch(push)
-}
-
-// dispatch fans a push out to every subscription whose channel+tradeType
-// prefix matches push.T (e.g. T="ticker.SPOT" matches a "ticker"/"SPOT"
-// subscription regardless of which symbol was requested, since the UTA
-// protocol doesn't echo the symbol back on the push envelope itself).
-func (c *Client) dispatch(push Push) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	for _, sub := range c.subscriptions {
-		if push.T != sub.channel+"."+sub.tradeType {
-			continue
-		}
-		select {
-		case sub.ch <- push:
-		default:
-			c.logger.Warn("kucoin: uta ws subscriber channel full, dropping message", "T", push.T)
-		}
-		if sub.tickerCh != nil {
-			ticker, err := DecodeTicker(push)
-			if err != nil {
-				c.logger.Warn("kucoin: uta ws decode ticker push failed", "error", err)
-				continue
-			}
-			select {
-			case sub.tickerCh <- ticker:
-			default:
-				c.logger.Warn("kucoin: uta ws typed ticker channel full, dropping message", "symbol", ticker.Symbol)
-			}
-		}
-	}
-}
-
-func (c *Client) reconnectLoop() {
-	c.mu.RLock()
-	shutdown := c.shutdown
-	c.mu.RUnlock()
-	defer func() {
-		c.mu.Lock()
-		c.reconnecting = false
-		c.mu.Unlock()
-	}()
-
-	backoff := reconnectMin
-	for {
-		if c.isClosed() {
-			return
-		}
-		timer := time.NewTimer(backoff)
-		select {
-		case <-shutdown:
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			return
-		case <-timer.C:
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), welcomeWaitTimeout)
-		err := c.connect(ctx, true)
-		cancel()
-		if err != nil {
-			if c.isClosed() {
-				return
-			}
-			c.logger.Warn("kucoin: uta ws reconnect failed", "error", err, "backoff", backoff)
-			backoff *= 2
-			if backoff > reconnectMax {
-				backoff = reconnectMax
-			}
-			continue
-		}
-
-		c.resubscribeAll()
-		c.logger.Info("kucoin: uta ws reconnected")
-		return
-	}
-}
-
-func (c *Client) resubscribeAll() {
-	c.mu.RLock()
-	subs := make([]*subscription, 0, len(c.subscriptions))
-	for _, sub := range c.subscriptions {
-		subs = append(subs, sub)
-	}
-	c.mu.RUnlock()
-
-	for _, sub := range subs {
-		req := map[string]any{
-			"id":        randomID(),
-			"action":    "subscribe",
-			"channel":   sub.channel,
-			"tradeType": sub.tradeType,
-		}
-		if sub.symbol != "" {
-			req["symbol"] = sub.symbol
-		}
-		if err := c.writeJSON(req); err != nil {
-			c.logger.Warn("kucoin: uta ws resubscribe failed", "channel", sub.channel, "error", err)
-		}
-	}
-}
+// Close unsubscribes. It is idempotent.
+func (h *Handle) Close() error { return h.h.Close() }

@@ -140,7 +140,7 @@ type InterestHistoryPage struct {
 // leverage. KuCoin returns an empty payload on success — ModifyLeverage
 // returns only an error.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/debit/modify-leverage-multiplier
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/debit/modify-leverage
 type ModifyLeverageRequest struct {
 	Leverage   string `json:"leverage"`         // > 1, up to 2 decimals
 	Symbol     string `json:"symbol,omitempty"` // required if IsIsolated

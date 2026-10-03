@@ -79,7 +79,7 @@ func (c *Client) GetConfig(ctx context.Context) (*Config, error) {
 // GetRiskLimitCross returns cross-margin risk limits, optionally filtered
 // to one currency.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/risk-limit/margin-trading-pair-configuration
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/risk-limit/get-margin-risk-limit
 func (c *Client) GetRiskLimitCross(ctx context.Context, currency string) ([]RiskLimitCrossItem, error) {
 	query := map[string]string{"isIsolated": "false"}
 	if currency != "" {
@@ -95,7 +95,7 @@ func (c *Client) GetRiskLimitCross(ctx context.Context, currency string) ([]Risk
 // GetRiskLimitIsolated returns isolated-margin risk limits, optionally
 // filtered to one symbol.
 //
-// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/risk-limit/margin-trading-pair-configuration
+// Docs: https://www.kucoin.com/docs-new/rest/margin-trading/risk-limit/get-margin-risk-limit
 func (c *Client) GetRiskLimitIsolated(ctx context.Context, symbol string) ([]RiskLimitIsolatedItem, error) {
 	query := map[string]string{"isIsolated": "true"}
 	if symbol != "" {

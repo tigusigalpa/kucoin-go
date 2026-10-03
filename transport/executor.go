@@ -79,6 +79,16 @@ func (e *Executor) DoPublicValues(ctx context.Context, method, path string, quer
 	return e.do(ctx, method, path, nil, nil, false, result)
 }
 
+// DoOptional issues a request that is signed when complete credentials are
+// configured and sent unsigned otherwise. It is for endpoints KuCoin documents
+// as public but, in practice, sometimes serves only to authenticated callers:
+// with credentials the call succeeds, without them KuCoin's own error is
+// returned instead of a local ErrCredentialsRequired, so the caller sees what
+// the exchange actually says.
+func (e *Executor) DoOptional(ctx context.Context, method, path string, query map[string]string, result interface{}) (*ResponseMeta, error) {
+	return e.do(ctx, method, path, query, nil, e.cfg.Credentials.isComplete(), result)
+}
+
 // Do issues an authenticated request, signing it with the configured
 // credentials. Returns ErrCredentialsRequired locally (no network call)
 // if complete credentials were not configured.
@@ -136,10 +146,12 @@ func (e *Executor) do(ctx context.Context, method, path string, query map[string
 			if policy.OnRetry != nil {
 				policy.OnRetry(attempt-1, delay, lastErr)
 			}
+			timer := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				return lastMeta, ctx.Err()
-			case <-time.After(delay):
+			case <-timer.C:
 			}
 		}
 
