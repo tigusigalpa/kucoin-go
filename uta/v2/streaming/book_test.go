@@ -1046,7 +1046,11 @@ func TestOrderBookIncrement_WithoutASnapshotSourceIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close session: %v", err)
+		}
+	}()
 	if _, err := s.SubscribeOrderBookIncrement(ctx5(t), "BTC-USDT"); !errors.Is(err, ErrNoSnapshotSource) {
 		t.Fatalf("error = %v", err)
 	}
@@ -1174,7 +1178,11 @@ func TestOrderBook_ExcludesAPlainSubscriptionOfTheSameFeed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer book.Close()
+	defer func() {
+		if err := book.Close(); err != nil {
+			t.Errorf("close order book: %v", err)
+		}
+	}()
 	if _, err := s.SubscribeOrderBookUpdates(ctx5(t), []string{bookSymbol}, DepthIncrement10ms); !errors.Is(err, stream.ErrAlreadySubscribed) {
 		t.Fatalf("a plain subscription of the book's feed: %v", err)
 	}
@@ -1189,5 +1197,7 @@ func TestOrderBook_ExcludesAPlainSubscriptionOfTheSameFeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("another symbol: %v", err)
 	}
-	other.Close()
+	if err := other.Close(); err != nil {
+		t.Fatal(err)
+	}
 }

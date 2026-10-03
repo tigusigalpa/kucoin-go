@@ -360,11 +360,12 @@ func TestSubscription_ConcurrentUseIsRaceFree(t *testing.T) {
 		}
 	}()
 	received := 0
+	closeErr := make(chan error, 1)
 	for v := range s.C() {
 		_ = v
 		received++
 		if received == 100 {
-			go s.Close() // concurrent Close from another goroutine
+			go func() { closeErr <- s.Close() }() // concurrent Close from another goroutine
 		}
 		_ = s.Err()
 		_ = s.Dropped()
@@ -372,5 +373,8 @@ func TestSubscription_ConcurrentUseIsRaceFree(t *testing.T) {
 	wg.Wait()
 	if received < 100 {
 		t.Fatalf("received only %d values", received)
+	}
+	if err := <-closeErr; err != nil {
+		t.Fatalf("concurrent Close: %v", err)
 	}
 }

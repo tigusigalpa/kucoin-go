@@ -262,7 +262,7 @@ func (e *Executor) attempt(ctx context.Context, method, endpoint string, bodyByt
 	if err != nil {
 		return nil, fmt.Errorf("kucoin: do request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes+1))
 	if err != nil {

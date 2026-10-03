@@ -141,7 +141,7 @@ func (i Interval) ValidFor(tradeType string) bool {
 	if !i.Valid() {
 		return false
 	}
-	return !(i == Interval6Hour && strings.EqualFold(tradeType, string(TradeTypeFutures)))
+	return i != Interval6Hour || !strings.EqualFold(tradeType, string(TradeTypeFutures))
 }
 
 // Depth selects what an order-book subscription delivers.

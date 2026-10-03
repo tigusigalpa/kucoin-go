@@ -317,7 +317,11 @@ func TestClassicFuturesStream_ManagedOrderBookUsesTheRESTSnapshot(t *testing.T) 
 	if err != nil {
 		t.Fatalf("SubscribeOrderBook: %v", err)
 	}
-	defer book.Close()
+	defer func() {
+		if err := book.Close(); err != nil {
+			t.Errorf("close order book: %v", err)
+		}
+	}()
 	select {
 	case <-book.Ready():
 	case <-time.After(5 * time.Second):
@@ -373,7 +377,11 @@ func TestClassicFuturesStream_PerDialOptionsOverrideClientOptions(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s1.Close()
+	defer func() {
+		if err := s1.Close(); err != nil {
+			t.Errorf("close first session: %v", err)
+		}
+	}()
 	// A per-dial handler replaces it for that session only.
 	s2, err := client.Classic.Futures.Stream.DialPublic(testCtx(t), stream.WithEventHandler(func(ev stream.Event) {
 		if ev.Type == stream.EventConnected {
@@ -383,7 +391,11 @@ func TestClassicFuturesStream_PerDialOptionsOverrideClientOptions(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s2.Close()
+	defer func() {
+		if err := s2.Close(); err != nil {
+			t.Errorf("close second session: %v", err)
+		}
+	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for (fromClient.Load() != 1 || fromDial.Load() != 1) && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)

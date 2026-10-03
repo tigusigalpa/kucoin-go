@@ -417,7 +417,7 @@ func TestMarginSessionServesSpotPublicChannelsToo(t *testing.T) {
 		t.Fatal(err)
 	}
 	eq(t, "mark price Value", next(t, marks).Value, "0.000011820000000")
-	var _ *classic.Client = s.Client() // the embedded Session's accessor is promoted
+	var _ = s.Client() // the embedded Session's accessor is promoted
 }
 
 // Every Spot subscribe method is a method of the Margin session as well, and

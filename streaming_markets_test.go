@@ -47,7 +47,11 @@ func TestClassicSpotStream_PublicSessionEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DialPublic: %v", err)
 	}
-	defer session.Close()
+	defer func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("close session: %v", err)
+		}
+	}()
 	ticks, err := session.SubscribeTicker(testCtx(t), []string{"BTC-USDT"})
 	if err != nil {
 		t.Fatalf("SubscribeTicker: %v", err)
@@ -81,7 +85,11 @@ func TestClassicSpotStream_ManagedOrderBookWithoutCredentialsFailsClearlyAndAtOn
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close()
+	defer func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("close session: %v", err)
+		}
+	}()
 	book, err := session.SubscribeOrderBook(testCtx(t), "BTC-USDT")
 	if err != nil {
 		t.Fatalf("SubscribeOrderBook: %v", err)
@@ -114,12 +122,20 @@ func TestClassicSpotStream_ManagedOrderBookUsesTheSignedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close()
+	defer func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("close session: %v", err)
+		}
+	}()
 	book, err := session.SubscribeOrderBook(testCtx(t), "BTC-USDT")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer book.Close()
+	defer func() {
+		if err := book.Close(); err != nil {
+			t.Errorf("close order book: %v", err)
+		}
+	}()
 	eventually(t, func() bool { return book.State() == orderbook.SyncSynced && book.Book().Sequence() == 17 }, "the book to follow the stream to sequence 17")
 	bid, _ := book.Book().BestBid()
 	if !sameNumber(bid.Price, "3988.51") || !sameNumber(bid.Size, "56") {

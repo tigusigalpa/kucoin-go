@@ -47,11 +47,11 @@ func payloadOf(t reflect.Type) (reflect.Type, bool) {
 // rawJSONPaths lists the places inside t where undecoded data could reach a
 // consumer.
 func rawJSONPaths(t reflect.Type, path string, seen map[reflect.Type]bool, out *[]string) {
-	switch {
-	case t == rawMessageType:
+	switch t {
+	case rawMessageType:
 		*out = append(*out, path+": json.RawMessage")
 		return
-	case t == errorType:
+	case errorType:
 		return
 	}
 	switch t.Kind() {

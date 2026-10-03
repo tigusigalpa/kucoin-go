@@ -571,7 +571,11 @@ func TestOrderBookWithoutASnapshotSourceIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close session: %v", err)
+		}
+	}()
 	if _, err := s.SubscribeOrderBook(ctx5(t), "XBTUSDTM"); !errors.Is(err, ErrNoSnapshotSource) {
 		t.Fatalf("error = %v", err)
 	}
