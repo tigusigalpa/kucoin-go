@@ -488,7 +488,11 @@ func TestServiceCopiesItsCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close session: %v", err)
+		}
+	}()
 	if m := <-got; m["kc-api-key"] != testCreds.APIKey {
 		t.Fatalf("auth frame used %v", m["kc-api-key"])
 	}

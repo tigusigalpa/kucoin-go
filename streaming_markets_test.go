@@ -160,7 +160,11 @@ func TestClassicMarginStream_PublicAndPrivateWiring(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DialPublic: %v", err)
 	}
-	defer session.Close()
+	defer func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("close session: %v", err)
+		}
+	}()
 	marks, err := session.SubscribeMarkPrice(testCtx(t), []string{"USDT-BTC"})
 	if err != nil {
 		t.Fatalf("SubscribeMarkPrice: %v", err)
@@ -189,7 +193,11 @@ func TestUTAStream_PublicFuturesSessionEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DialFutures: %v", err)
 	}
-	defer session.Close()
+	defer func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("close session: %v", err)
+		}
+	}()
 	ticks, err := session.SubscribeTicker(testCtx(t), []string{"XBTUSDTM"})
 	if err != nil {
 		t.Fatalf("SubscribeTicker: %v", err)

@@ -601,7 +601,11 @@ func TestDialPrivateWithoutCredentialsFailsBeforeAnyNetworkAccess(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close session: %v", err)
+		}
+	}()
 	if _, err := s.SubscribeCrossMarginPosition(ctx5(t)); !errors.Is(err, ErrPrivateConnectionRequired) {
 		t.Fatalf("error = %v", err)
 	}

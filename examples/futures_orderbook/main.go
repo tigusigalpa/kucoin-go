@@ -49,7 +49,11 @@ func run(ctx context.Context, symbol string, depth int) error {
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}
-	defer session.Close()
+	defer func() {
+		if err := session.Close(); err != nil {
+			log.Printf("close streaming session: %v", err)
+		}
+	}()
 
 	// SubscribeOrderBook subscribes to the incremental feed, fetches the snapshot,
 	// replays what arrived meanwhile and keeps the book in step with the sequence.
@@ -57,7 +61,11 @@ func run(ctx context.Context, symbol string, depth int) error {
 	if err != nil {
 		return fmt.Errorf("order book: %w", err)
 	}
-	defer book.Close()
+	defer func() {
+		if err := book.Close(); err != nil {
+			log.Printf("close order book: %v", err)
+		}
+	}()
 
 	select {
 	case <-book.Ready():

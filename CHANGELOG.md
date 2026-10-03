@@ -128,9 +128,10 @@ project follows [SemVer](https://semver.org/).
 
 #### Fixed
 
-- Cleared `errcheck` and `staticcheck` findings across streaming tests and transport response
-  cleanup: test teardown now reports `Close` failures, concurrent close tests await their
-  result, and equivalent predicates and switches use idiomatic Go forms.
+- Cleared `errcheck` and `staticcheck` findings across streaming tests, examples, and
+  transport response cleanup: session and order-book teardown now reports `Close` failures,
+  concurrent close tests await their result, and equivalent predicates and switches use
+  idiomatic Go forms.
 - Closing or unsubscribing while the reader goroutine was sending to the subscription
   channel was a data race and a `send on closed channel` panic (both WebSocket clients).
 - A slow consumer silently lost the newest messages, which corrupts sequenced streams such
